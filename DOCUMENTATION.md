@@ -22,7 +22,8 @@
 14. [Database Schema](#14-database-schema)
 15. [Project File Map](#15-project-file-map)
 16. [Remaining Build Phases](#16-remaining-build-phases)
-17. [Glossary](#17-glossary)
+17. [Deployment Roadmap: Local → Railway](#17-deployment-roadmap-local--railway)
+18. [Glossary](#18-glossary)
 
 ---
 
@@ -1062,7 +1063,92 @@ quantAlgoV1/
 
 ---
 
-## 17. Glossary
+## 17. Deployment Roadmap: Local → Railway
+
+The project follows a two-stage deployment strategy.
+
+### Stage 1: Local Development & Testing (Current)
+
+All development, testing, and paper trading validation happens on the local machine.
+
+**Local environment specs:**
+- CPU: AMD Ryzen 7 7700X (8 cores / 16 threads)
+- RAM: 31 GB
+- OS: Windows 11
+
+**What runs locally:**
+
+| Service | How It Runs | Resource Usage |
+|---|---|---|
+| Postgres 16 | Docker container | ~200 MB RAM |
+| Redis 7 | Docker container | ~50 MB RAM |
+| Qdrant | Docker container | ~200 MB RAM |
+| Flower | Docker container | ~100 MB RAM |
+| FastAPI server | Python process (venv) | ~100 MB RAM |
+| Celery worker | Python process (venv) | ~100 MB RAM |
+| FinBERT model | Loaded by Celery worker | ~1.5 GB RAM |
+| **Total** | | **~2.3 GB RAM** |
+
+With 31 GB of RAM, the local machine has more than enough headroom. The Ryzen 7 7700X handles all concurrent services without issue.
+
+**Goals before moving to Stage 2:**
+1. All 12 build phases complete
+2. Full test suite passing (`pytest` exits 0 with all test files)
+3. End-to-end paper trading validated over at least one full trading week
+4. Pipeline runs reliably without manual intervention during market hours
+5. Circuit breaker tested and confirmed working
+6. PnL tracking verified against manual calculations
+
+### Stage 2: Railway Cloud Deployment (Future)
+
+Once the system is validated locally, it migrates to [Railway](https://railway.app) for always-on operation during market hours without requiring the local machine to stay powered on.
+
+**Why Railway:**
+- Managed Postgres, Redis built-in (no Docker needed)
+- Simple deploy from GitHub repo
+- Scales vertically if FinBERT or Qdrant needs more RAM
+- Affordable for a single-user system (~$5-20/month depending on usage)
+- Supports cron-like scheduling natively
+
+**Railway service mapping:**
+
+| Local Component | Railway Equivalent |
+|---|---|
+| Docker Postgres | Railway managed Postgres plugin |
+| Docker Redis | Railway managed Redis plugin |
+| Docker Qdrant | Railway service (custom Docker image) |
+| `uvicorn apps.api.main:app` | Railway web service (auto-detected from Procfile) |
+| `celery -A apps.scheduler.worker worker` | Railway worker service |
+| Docker Flower | Railway service (optional, for monitoring) |
+
+**What changes for Railway:**
+- `DATABASE_URL`, `REDIS_URL` — injected by Railway automatically
+- `QDRANT_URL` — points to the Qdrant Railway service's internal URL
+- A `Procfile` or `railway.toml` is added to define services
+- `docker-compose.yml` is no longer needed (Railway manages infrastructure)
+- Environment variables are set in the Railway dashboard instead of `.env`
+
+**What does NOT change:**
+- All Python code stays exactly the same
+- `core/config.py` already reads everything from env vars — no code changes needed
+- Alembic migrations run the same way (`alembic upgrade head`)
+- The test suite runs the same way
+
+**Migration checklist (to be completed when ready):**
+- [ ] Create Railway project linked to the GitHub repo
+- [ ] Provision Postgres and Redis plugins
+- [ ] Deploy Qdrant as a custom service
+- [ ] Set all environment variables in Railway dashboard
+- [ ] Add `Procfile` with web and worker processes
+- [ ] Run `alembic upgrade head` on Railway Postgres
+- [ ] Verify health endpoint responds
+- [ ] Run one full news cycle end-to-end
+- [ ] Confirm paper trading ticks during market hours
+- [ ] Monitor for 1 full trading day before considering it stable
+
+---
+
+## 18. Glossary
 
 | Term | Definition |
 |---|---|
