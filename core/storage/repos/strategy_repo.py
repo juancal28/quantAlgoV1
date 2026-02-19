@@ -5,10 +5,10 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.storage.models import StrategyVersion
+from core.storage.models import StrategyAuditLog, StrategyVersion
 
 
 async def get_active_by_name(
@@ -58,6 +58,40 @@ async def get_all_strategies(
         stmt = stmt.where(StrategyVersion.status == status)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_version_by_strategy_and_id(
+    session: AsyncSession, strategy_name: str, version_id_str: str
+) -> StrategyVersion | None:
+    """Fetch a specific version by strategy name and version ID string.
+
+    Filters in Python to avoid SQLite UUID type mismatch issues.
+    """
+    versions = await get_versions_by_name(session, strategy_name)
+    for v in versions:
+        if str(v.id) == version_id_str:
+            return v
+    return None
+
+
+async def count_activations_today(
+    session: AsyncSession, strategy_name: str
+) -> int:
+    """Count how many times a strategy was approved today (UTC)."""
+    today_start = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    )
+    stmt = (
+        select(func.count())
+        .select_from(StrategyAuditLog)
+        .where(
+            StrategyAuditLog.strategy_name == strategy_name,
+            StrategyAuditLog.action == "approved",
+            StrategyAuditLog.timestamp >= today_start,
+        )
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
 
 
 async def update_status(

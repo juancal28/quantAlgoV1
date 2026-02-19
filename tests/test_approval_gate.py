@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select
 
-from core.agent.approval import submit_for_approval
+from core.agent.approval import approve_strategy, submit_for_approval
 from core.storage.models import StrategyAuditLog, StrategyVersion
 
 
@@ -108,3 +108,109 @@ async def test_records_before_definition_when_active_exists(db_session, sample_d
     audit = audits[0]
     assert audit.before_definition == active_def
     assert audit.after_definition == sample_definition
+
+
+# --- approve_strategy tests ---
+
+
+@pytest.mark.asyncio
+async def test_approve_activates_pending_version(db_session, sample_definition):
+    """Approving a pending_approval version sets status=active."""
+    version = await submit_for_approval(
+        db_session, "test_strat", sample_definition, reason="proposal"
+    )
+    activated = await approve_strategy(
+        db_session, "test_strat", str(version.id), approved_by="human"
+    )
+    assert activated.status == "active"
+    assert activated.approved_by == "human"
+    assert activated.activated_at is not None
+
+
+@pytest.mark.asyncio
+async def test_approve_rejects_non_pending_status(db_session, sample_definition):
+    """Cannot approve a version that isn't pending_approval."""
+    active = StrategyVersion(
+        name="test_strat",
+        version=1,
+        status="active",
+        definition=sample_definition,
+        reason="already active",
+    )
+    db_session.add(active)
+    await db_session.flush()
+
+    with pytest.raises(ValueError, match="expected 'pending_approval'"):
+        await approve_strategy(db_session, "test_strat", str(active.id))
+
+
+@pytest.mark.asyncio
+async def test_approve_archives_previous_active(db_session, sample_definition):
+    """Approving a new version archives the currently active one."""
+    # Create active v1
+    v1 = StrategyVersion(
+        name="test_strat",
+        version=1,
+        status="active",
+        definition={"name": "test_strat", "universe": ["SPY"]},
+        reason="initial",
+    )
+    db_session.add(v1)
+    await db_session.flush()
+
+    # Submit and approve v2
+    v2 = await submit_for_approval(
+        db_session, "test_strat", sample_definition, reason="update"
+    )
+    await approve_strategy(db_session, "test_strat", str(v2.id))
+
+    # v1 should now be archived
+    await db_session.refresh(v1)
+    assert v1.status == "archived"
+
+
+@pytest.mark.asyncio
+async def test_approve_writes_audit_log(db_session, sample_definition):
+    """Approving writes an audit log with action='approved'."""
+    version = await submit_for_approval(
+        db_session, "test_strat", sample_definition, reason="proposal"
+    )
+    await approve_strategy(db_session, "test_strat", str(version.id))
+
+    stmt = select(StrategyAuditLog).where(
+        StrategyAuditLog.strategy_name == "test_strat",
+        StrategyAuditLog.action == "approved",
+    )
+    result = await db_session.execute(stmt)
+    audits = list(result.scalars().all())
+    assert len(audits) == 1
+    assert audits[0].trigger == "human"
+
+
+@pytest.mark.asyncio
+async def test_approve_respects_daily_activation_limit(
+    db_session, sample_definition, mock_settings
+):
+    """Cannot approve more than STRATEGY_MAX_ACTIVATIONS_PER_DAY times."""
+    mock_settings("STRATEGY_MAX_ACTIVATIONS_PER_DAY", "1")
+
+    # Submit and approve first version
+    v1 = await submit_for_approval(
+        db_session, "test_strat", sample_definition, reason="first"
+    )
+    await approve_strategy(db_session, "test_strat", str(v1.id))
+
+    # Submit second version — should be blocked
+    v2 = await submit_for_approval(
+        db_session, "test_strat", sample_definition, reason="second"
+    )
+    with pytest.raises(ValueError, match="Daily activation limit"):
+        await approve_strategy(db_session, "test_strat", str(v2.id))
+
+
+@pytest.mark.asyncio
+async def test_approve_nonexistent_version_raises(db_session):
+    """Approving a non-existent version ID raises ValueError."""
+    fake_id = "00000000-0000-0000-0000-000000000000"
+    with pytest.raises(ValueError, match="not found"):
+        await approve_strategy(db_session, "test_strat", fake_id)
