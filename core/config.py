@@ -67,6 +67,11 @@ class Settings(BaseSettings):
     PAPER_GUARD: bool = True
     TRADING_MODE: str = "paper"
 
+    # LLM (RAG Agent)
+    LLM_PROVIDER: str = "anthropic"
+    ANTHROPIC_API_KEY: str = ""
+    LLM_MODEL: str = "claude-sonnet-4-6"
+
     # Strategy Agent
     STRATEGY_MIN_CONFIDENCE: float = 0.6
     STRATEGY_MAX_DIFF_FIELDS: int = 3

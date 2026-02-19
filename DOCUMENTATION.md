@@ -23,7 +23,8 @@
 15. [Project File Map](#15-project-file-map)
 16. [Remaining Build Phases](#16-remaining-build-phases)
 17. [Deployment Roadmap: Local → Railway](#17-deployment-roadmap-local--railway)
-18. [Glossary](#18-glossary)
+18. [Monitoring with Claude Desktop (Dual MCP Servers)](#18-monitoring-with-claude-desktop-dual-mcp-servers)
+19. [Glossary](#19-glossary)
 
 ---
 
@@ -1262,7 +1263,88 @@ Each strategy pod gets its own environment overrides. The same codebase is deplo
 
 ---
 
-## 18. Glossary
+## 18. Monitoring with Claude Desktop (Dual MCP Servers)
+
+This system can be monitored conversationally using Claude Desktop with two MCP servers running side by side:
+
+1. **quant-news-rag** (our server) — exposes pipeline tools and 5 read-only monitoring tools
+2. **alpaca-market-data** (Alpaca's official MCP server) — provides real-time market data and paper account info
+
+### Setup
+
+1. Install the Alpaca MCP server:
+   ```bash
+   pip install alpaca-mcp-server
+   ```
+
+2. Copy the MCP config template to your Claude Desktop config directory:
+   ```bash
+   cp mcp-config.example.json ~/.claude/mcp-config.json
+   ```
+
+3. Edit the config to fill in your Alpaca API credentials and correct `DATABASE_URL`.
+
+4. Restart Claude Desktop to pick up the new MCP server configuration.
+
+### Our Monitoring Tools
+
+These 5 tools provide read-only visibility into system internals that Alpaca's server knows nothing about:
+
+| Tool | Description | Example Question |
+|---|---|---|
+| `monitor_strategies` | List all strategies with status, version, backtest metrics | "What strategies are pending approval?" |
+| `monitor_runs` | Recent pipeline runs (ingest, embed, sentiment, etc.) | "When did the last news cycle run?" |
+| `monitor_pnl` | Daily PnL snapshots for a strategy | "Show me PnL for sentiment_momentum_v1 this week" |
+| `monitor_health` | System health: trading mode, market status, connectivity | "Is the system healthy?" |
+| `monitor_news` | Recent news articles with sentiment and tickers | "What news was ingested in the last hour?" |
+
+### Alpaca MCP Server — Safe vs. Unsafe Tools
+
+The Alpaca MCP server exposes tools for both reading and trading. Only use the read-only tools:
+
+| Safe (Read-Only) | Unsafe (Do NOT Use) |
+|---|---|
+| Get account info | Place orders |
+| Get positions | Cancel orders |
+| Get portfolio history | Close positions |
+| Get market data (bars, quotes) | |
+| Get watchlist | |
+| Get order history | |
+
+The Alpaca server's trading tools bypass our safety rails (PAPER_GUARD, strategy approval, circuit breaker). All trading should go through our pipeline.
+
+### Safety Notes
+
+- Always set `ALPACA_PAPER_TRADE=True` in the Alpaca MCP server config. This ensures it connects to Alpaca's paper environment, not live.
+- `PAPER_GUARD=true` in our server prevents any live broker from being instantiated.
+- The two servers maintain **independent position ledgers**. Our `pnl_snapshots` table tracks positions from our paper broker. Alpaca's account shows positions placed through their API. They do not sync automatically.
+- If you use Alpaca's MCP server to place a paper trade directly, our system will not know about it — it won't appear in `monitor_pnl` results.
+
+### Example Operator Conversations
+
+**Checking system status:**
+> "Is the system healthy? When was the last news ingestion?"
+>
+> Claude calls `monitor_health` from our server and reports: trading mode is paper, market is open, last ingest was 3 minutes ago, 12 articles in the last 2 hours, Qdrant is connected.
+
+**Reviewing a pending strategy:**
+> "What strategies are pending approval? What are their backtest metrics?"
+>
+> Claude calls `monitor_strategies` with status filter `pending_approval` and displays the strategy name, version, Sharpe ratio, drawdown, and win rate.
+
+**Checking real-time market data alongside PnL:**
+> "What's the current price of SPY? And show me today's PnL for sentiment_momentum_v1."
+>
+> Claude calls Alpaca's market data tool for SPY's latest quote, then calls `monitor_pnl` from our server for today's snapshot. Both answers appear in the same conversation.
+
+**Reviewing recent news sentiment:**
+> "What news came in during the last 30 minutes? How's the sentiment?"
+>
+> Claude calls `monitor_news` with minutes=30 and displays titles, sources, sentiment labels, and extracted tickers.
+
+---
+
+## 19. Glossary
 
 | Term | Definition |
 |---|---|

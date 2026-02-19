@@ -45,6 +45,21 @@ async def complete_run(
     return run
 
 
+async def get_latest_by_type(
+    session: AsyncSession,
+    run_type: str,
+) -> Run | None:
+    """Return the most recent run of a given type."""
+    stmt = (
+        select(Run)
+        .where(Run.run_type == run_type)
+        .order_by(Run.started_at.desc())
+        .limit(1)
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one_or_none()
+
+
 async def get_recent(
     session: AsyncSession,
     limit: int = 20,

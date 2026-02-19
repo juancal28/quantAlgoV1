@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.storage.models import NewsDocument
@@ -35,6 +35,19 @@ async def create(session: AsyncSession, doc: NewsDocument) -> NewsDocument:
     session.add(doc)
     await session.flush()
     return doc
+
+
+async def count_recent(
+    session: AsyncSession,
+    minutes: int = 120,
+) -> int:
+    """Count documents ingested within the given time window."""
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    stmt = select(func.count(NewsDocument.id)).where(
+        NewsDocument.fetched_at >= cutoff
+    )
+    result = await session.execute(stmt)
+    return result.scalar_one()
 
 
 async def get_recent(

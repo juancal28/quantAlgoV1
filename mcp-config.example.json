@@ -1,0 +1,26 @@
+{
+  "mcpServers": {
+    "quant-news-rag": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "apps.mcp_server.server"],
+      "env": {
+        "DATABASE_URL": "postgresql+psycopg://postgres:postgres@localhost:5432/quant",
+        "QDRANT_URL": "http://localhost:6333",
+        "REDIS_URL": "redis://localhost:6379/0",
+        "TRADING_MODE": "paper",
+        "PAPER_GUARD": "true"
+      }
+    },
+    "alpaca-market-data": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["alpaca-mcp-server", "serve"],
+      "env": {
+        "ALPACA_API_KEY": "YOUR_KEY_HERE",
+        "ALPACA_API_SECRET": "YOUR_SECRET_HERE",
+        "ALPACA_PAPER_TRADE": "True"
+      }
+    }
+  }
+}

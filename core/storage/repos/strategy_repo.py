@@ -47,6 +47,19 @@ async def create_version(
     return version
 
 
+async def get_all_strategies(
+    session: AsyncSession,
+    status: str | None = None,
+    limit: int = 50,
+) -> list[StrategyVersion]:
+    """Return strategies, optionally filtered by status."""
+    stmt = select(StrategyVersion).order_by(StrategyVersion.created_at.desc()).limit(limit)
+    if status is not None:
+        stmt = stmt.where(StrategyVersion.status == status)
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def update_status(
     session: AsyncSession,
     version_id: uuid.UUID,

@@ -58,3 +58,98 @@ class QueryResultItem(BaseModel):
 
 class QueryOutput(BaseModel):
     results: list[QueryResultItem]
+
+
+# --- monitor_strategies ---
+
+class StrategyOverviewInput(BaseModel):
+    status: str | None = Field(default=None, description="Filter by status (pending_approval, active, archived)")
+    limit: int = Field(default=50, description="Max strategies to return")
+
+
+class StrategyOverviewItem(BaseModel):
+    name: str
+    version: int
+    status: str
+    created_at: str
+    backtest_metrics: dict[str, Any] | None = None
+
+
+class StrategyOverviewOutput(BaseModel):
+    strategies: list[StrategyOverviewItem]
+
+
+# --- monitor_runs ---
+
+class RecentRunsInput(BaseModel):
+    limit: int = Field(default=20, description="Max runs to return")
+
+
+class RecentRunItem(BaseModel):
+    id: str
+    run_type: str
+    started_at: str
+    ended_at: str | None = None
+    status: str
+    details: dict[str, Any] | None = None
+
+
+class RecentRunsOutput(BaseModel):
+    runs: list[RecentRunItem]
+
+
+# --- monitor_pnl ---
+
+class PnlSummaryInput(BaseModel):
+    strategy_name: str = Field(description="Strategy to query PnL for")
+    days: int = Field(default=30, description="Number of days of PnL history")
+
+
+class PnlSummaryItem(BaseModel):
+    date: str
+    realized_pnl: float
+    unrealized_pnl: float
+    gross_exposure: float
+    peak_pnl: float
+    positions: dict[str, Any] | None = None
+
+
+class PnlSummaryOutput(BaseModel):
+    snapshots: list[PnlSummaryItem]
+
+
+# --- monitor_health ---
+
+class SystemHealthInput(BaseModel):
+    pass  # No inputs required
+
+
+class SystemHealthOutput(BaseModel):
+    trading_mode: str
+    paper_guard: bool
+    market_open: bool
+    last_ingest_run: dict[str, Any] | None = None
+    news_count_last_2h: int
+    strategy_counts: dict[str, int]
+    services: dict[str, str]
+
+
+# --- monitor_news ---
+
+class RecentNewsInput(BaseModel):
+    minutes: int = Field(default=120, description="Time window in minutes")
+    limit: int = Field(default=20, description="Max articles to return")
+
+
+class RecentNewsItem(BaseModel):
+    id: str
+    title: str
+    source: str
+    published_at: str
+    sentiment_score: float | None = None
+    sentiment_label: str | None = None
+    tickers: list[str]
+
+
+class RecentNewsOutput(BaseModel):
+    articles: list[RecentNewsItem]

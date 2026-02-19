@@ -13,8 +13,13 @@ from mcp.types import TextContent, Tool
 from apps.mcp_server.schemas import (
     EmbedInput,
     IngestInput,
+    PnlSummaryInput,
     QueryInput,
+    RecentNewsInput,
+    RecentRunsInput,
     SentimentInput,
+    StrategyOverviewInput,
+    SystemHealthInput,
 )
 from core.logging import get_logger, setup_logging
 from core.storage.db import get_session
@@ -47,6 +52,32 @@ async def list_tools() -> list[Tool]:
             description="Query the knowledge base for relevant documents",
             inputSchema=QueryInput.model_json_schema(),
         ),
+        # --- Monitoring tools ---
+        Tool(
+            name="monitor_strategies",
+            description="Overview of all strategies with status, version, and backtest metrics",
+            inputSchema=StrategyOverviewInput.model_json_schema(),
+        ),
+        Tool(
+            name="monitor_runs",
+            description="Recent pipeline runs (ingest, embed, sentiment, backtest, etc.)",
+            inputSchema=RecentRunsInput.model_json_schema(),
+        ),
+        Tool(
+            name="monitor_pnl",
+            description="Daily PnL snapshots for a strategy",
+            inputSchema=PnlSummaryInput.model_json_schema(),
+        ),
+        Tool(
+            name="monitor_health",
+            description="System health: trading mode, market status, service connectivity, counts",
+            inputSchema=SystemHealthInput.model_json_schema(),
+        ),
+        Tool(
+            name="monitor_news",
+            description="Recent news articles with sentiment scores and extracted tickers",
+            inputSchema=RecentNewsInput.model_json_schema(),
+        ),
     ]
 
 
@@ -56,6 +87,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
 
     from apps.mcp_server.tools.ingest import ingest_latest_news
     from apps.mcp_server.tools.kb import embed_and_upsert_docs, query_kb
+    from apps.mcp_server.tools.monitoring import (
+        get_pnl_summary,
+        get_recent_news_summary,
+        get_recent_runs,
+        get_strategy_overview,
+        get_system_health,
+    )
     from apps.mcp_server.tools.sentiment import score_sentiment
 
     async for session in get_session():
@@ -67,6 +105,16 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await score_sentiment(session, SentimentInput(**arguments))
         elif name == "query_kb":
             result = await query_kb(QueryInput(**arguments))
+        elif name == "monitor_strategies":
+            result = await get_strategy_overview(session, StrategyOverviewInput(**arguments))
+        elif name == "monitor_runs":
+            result = await get_recent_runs(session, RecentRunsInput(**arguments))
+        elif name == "monitor_pnl":
+            result = await get_pnl_summary(session, PnlSummaryInput(**arguments))
+        elif name == "monitor_health":
+            result = await get_system_health(session, SystemHealthInput(**arguments))
+        elif name == "monitor_news":
+            result = await get_recent_news_summary(session, RecentNewsInput(**arguments))
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
