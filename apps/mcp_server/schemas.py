@@ -153,3 +153,39 @@ class RecentNewsItem(BaseModel):
 
 class RecentNewsOutput(BaseModel):
     articles: list[RecentNewsItem]
+
+
+# --- propose_strategy_update ---
+
+class ProposeStrategyInput(BaseModel):
+    strategy_name: str = Field(description="Strategy to propose update for")
+    recent_minutes: int = Field(default=240, description="Lookback window in minutes")
+
+
+class ProposeStrategyOutput(BaseModel):
+    proposal: dict[str, Any]
+
+
+# --- validate_strategy ---
+
+class ValidateStrategyInput(BaseModel):
+    definition_json: dict[str, Any] = Field(description="Strategy definition to validate")
+
+
+class ValidateStrategyOutput(BaseModel):
+    valid: bool
+    errors: list[str]
+
+
+# --- submit_strategy_for_approval ---
+
+class SubmitStrategyInput(BaseModel):
+    strategy_name: str = Field(description="Strategy name")
+    definition_json: dict[str, Any] = Field(description="Strategy definition")
+    reason: str = Field(description="Reason for submission")
+    backtest_metrics: dict[str, Any] | None = Field(default=None, description="Backtest results")
+
+
+class SubmitStrategyOutput(BaseModel):
+    strategy_version_id: str
+    status: str

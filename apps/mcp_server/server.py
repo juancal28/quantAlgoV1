@@ -14,12 +14,15 @@ from apps.mcp_server.schemas import (
     EmbedInput,
     IngestInput,
     PnlSummaryInput,
+    ProposeStrategyInput,
     QueryInput,
     RecentNewsInput,
     RecentRunsInput,
     SentimentInput,
     StrategyOverviewInput,
+    SubmitStrategyInput,
     SystemHealthInput,
+    ValidateStrategyInput,
 )
 from core.logging import get_logger, setup_logging
 from core.storage.db import get_session
@@ -78,6 +81,22 @@ async def list_tools() -> list[Tool]:
             description="Recent news articles with sentiment scores and extracted tickers",
             inputSchema=RecentNewsInput.model_json_schema(),
         ),
+        # --- Strategy agent tools ---
+        Tool(
+            name="propose_strategy_update",
+            description="Query KB and LLM to propose a strategy update",
+            inputSchema=ProposeStrategyInput.model_json_schema(),
+        ),
+        Tool(
+            name="validate_strategy",
+            description="Validate a strategy definition against business rules",
+            inputSchema=ValidateStrategyInput.model_json_schema(),
+        ),
+        Tool(
+            name="submit_strategy_for_approval",
+            description="Submit a validated strategy for human approval (status=pending_approval)",
+            inputSchema=SubmitStrategyInput.model_json_schema(),
+        ),
     ]
 
 
@@ -95,6 +114,11 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         get_system_health,
     )
     from apps.mcp_server.tools.sentiment import score_sentiment
+    from apps.mcp_server.tools.strategy import (
+        propose_strategy,
+        submit_strategy,
+        validate_strategy_tool,
+    )
 
     async for session in get_session():
         if name == "ingest_latest_news":
@@ -115,6 +139,12 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await get_system_health(session, SystemHealthInput(**arguments))
         elif name == "monitor_news":
             result = await get_recent_news_summary(session, RecentNewsInput(**arguments))
+        elif name == "propose_strategy_update":
+            result = await propose_strategy(session, ProposeStrategyInput(**arguments))
+        elif name == "validate_strategy":
+            result = await validate_strategy_tool(ValidateStrategyInput(**arguments))
+        elif name == "submit_strategy_for_approval":
+            result = await submit_strategy(session, SubmitStrategyInput(**arguments))
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 
