@@ -1146,6 +1146,120 @@ Once the system is validated locally, it migrates to [Railway](https://railway.a
 - [ ] Confirm paper trading ticks during market hours
 - [ ] Monitor for 1 full trading day before considering it stable
 
+### Stage 3: Kubernetes Orchestration (Future)
+
+Once the system is proven on Railway, the final stage scales it into a multi-instance architecture using Kubernetes. The key idea: **separate Docker containers focus on specific markets or stock types**, and **Kubernetes coordinates all of them for portfolio-level decisions**.
+
+**Why Kubernetes:**
+- Run specialized strategy pods per market sector (e.g., one pod for tech stocks, another for energy, another for ETFs)
+- Each pod has its own ingestion pipeline, embeddings, and strategy — tuned to that market's characteristics
+- A central portfolio coordinator aggregates positions, enforces cross-strategy risk limits, and prevents conflicting trades
+- Horizontal scaling: add a new market by deploying a new pod with its own config
+- Self-healing: K8s restarts crashed pods automatically, ensuring market hours are never missed
+- Resource isolation: FinBERT sentiment scoring gets dedicated GPU nodes; lightweight RSS ingestion stays on small CPU nodes
+
+**Architecture overview:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Kubernetes Cluster                     │
+│                                                         │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
+│  │  Tech Stocks  │  │   Energy     │  │   ETFs       │  │
+│  │  Strategy Pod │  │  Strategy Pod│  │  Strategy Pod│  │
+│  │              │  │              │  │              │  │
+│  │ - RSS ingest │  │ - RSS ingest │  │ - RSS ingest │  │
+│  │ - Embed/RAG  │  │ - Embed/RAG  │  │ - Embed/RAG  │  │
+│  │ - Sentiment  │  │ - Sentiment  │  │ - Sentiment  │  │
+│  │ - Backtest   │  │ - Backtest   │  │ - Backtest   │  │
+│  │ - Paper trade│  │ - Paper trade│  │ - Paper trade│  │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘  │
+│         │                 │                 │           │
+│         └────────┬────────┘────────┬────────┘           │
+│                  ▼                 ▼                     │
+│  ┌─────────────────────────────────────────────┐        │
+│  │       Portfolio Coordinator Service          │        │
+│  │                                             │        │
+│  │ - Aggregates positions across all pods      │        │
+│  │ - Enforces portfolio-wide risk limits       │        │
+│  │ - Prevents conflicting trades (long AAPL    │        │
+│  │   in tech pod + short AAPL in ETF pod)      │        │
+│  │ - Global circuit breaker (total portfolio)  │        │
+│  │ - Rebalances cross-strategy exposure        │        │
+│  └──────────────────┬──────────────────────────┘        │
+│                     │                                   │
+│  ┌──────────────────┴──────────────────────────┐        │
+│  │            Shared Infrastructure             │        │
+│  │                                             │        │
+│  │  Postgres (StatefulSet or managed)          │        │
+│  │  Redis (for Celery + caching)               │        │
+│  │  Qdrant (StatefulSet with persistent vol)   │        │
+│  │  Prometheus + Grafana (observability)        │        │
+│  └─────────────────────────────────────────────┘        │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Per-pod configuration:**
+
+Each strategy pod gets its own environment overrides. The same codebase is deployed to every pod — only environment variables differ:
+
+| Variable | Tech Pod | Energy Pod | ETFs Pod |
+|---|---|---|---|
+| `STRATEGY_APPROVED_UNIVERSE` | `AAPL,MSFT,NVDA,GOOGL,META` | `XOM,CVX,SLB,EOG,COP` | `SPY,QQQ,IWM,DIA,XLF` |
+| `NEWS_SOURCES` | Tech-focused RSS feeds | Energy-focused RSS feeds | Broad market feeds |
+| `VECTOR_COLLECTION` | `news_tech` | `news_energy` | `news_etf` |
+| `STRATEGY_MIN_CONFIDENCE` | `0.7` (higher bar) | `0.6` | `0.5` (more liquid) |
+
+**Portfolio Coordinator responsibilities:**
+- Runs as a separate Deployment in the cluster
+- Reads all strategy pods' positions from the shared Postgres `pnl_snapshots` table
+- Computes aggregate gross exposure, net exposure, sector concentration
+- If total portfolio daily loss exceeds a global threshold, sends a "halt" signal to all pods
+- Detects conflicting positions (e.g., one pod is long AAPL, another is short via an ETF that holds AAPL) and flags for human review
+- Exposes a dashboard API for cross-strategy portfolio visualization
+
+**K8s resource types:**
+
+| Component | K8s Resource | Replicas | Notes |
+|---|---|---|---|
+| Strategy pod | Deployment | 1 per market | Each gets its own ConfigMap for env |
+| Portfolio coordinator | Deployment | 1 | Reads from shared DB |
+| Postgres | StatefulSet or managed (e.g., CloudNativePG) | 1 primary + 1 replica | Persistent volume claims |
+| Redis | Deployment | 1 | Or managed (ElastiCache, etc.) |
+| Qdrant | StatefulSet | 1+ | Persistent volume for vectors |
+| Celery workers | Deployment | 1 per pod | Separate queue per market |
+| Flower | Deployment | 1 | Monitoring all queues |
+| Prometheus | StatefulSet | 1 | Scrapes all pods |
+| Grafana | Deployment | 1 | Dashboards for PnL, latency, errors |
+
+**What changes for Kubernetes:**
+- A `k8s/` directory is added with Helm charts or Kustomize manifests
+- Each strategy pod gets a ConfigMap with its market-specific environment variables
+- The portfolio coordinator is a new `core/portfolio/coordinator.py` module
+- Celery queues are namespaced per market (e.g., `tech_queue`, `energy_queue`)
+- Observability layer (`core/observability/`) is fully implemented with Prometheus metrics
+- Health endpoints gain readiness and liveness probe paths (`/health/ready`, `/health/live`)
+
+**What does NOT change:**
+- All existing Python code, models, and MCP tools remain the same
+- The per-pod pipeline is identical to the single-instance pipeline
+- `core/config.py` already reads everything from env vars — no code changes needed
+- The test suite runs the same way
+
+**Migration checklist (to be completed when ready):**
+- [ ] Choose a K8s provider (EKS, GKE, AKS, or self-hosted k3s)
+- [ ] Create Helm chart / Kustomize base for the application
+- [ ] Define ConfigMaps for each market sector
+- [ ] Deploy shared infrastructure (Postgres, Redis, Qdrant) as StatefulSets
+- [ ] Deploy first strategy pod and verify it runs a full news cycle
+- [ ] Build the portfolio coordinator service
+- [ ] Deploy additional strategy pods for other markets
+- [ ] Set up Prometheus + Grafana for cross-pod monitoring
+- [ ] Configure HorizontalPodAutoscaler for Celery workers
+- [ ] Set up PodDisruptionBudgets for zero-downtime upgrades
+- [ ] Run all strategy pods through 1 full trading week before adding more markets
+- [ ] Document runbook for adding a new market sector (copy ConfigMap, deploy pod)
+
 ---
 
 ## 18. Glossary
