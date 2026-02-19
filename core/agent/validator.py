@@ -1,0 +1,1 @@
+"""Strategy definition validator."""

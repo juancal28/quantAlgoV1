@@ -1,0 +1,1 @@
+"""Sentiment scoring MCP tool."""

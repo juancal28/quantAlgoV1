@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quant-news-rag"
+version = "0.1.0"
+description = "Modular paper-first quantitative trading system with news-RAG"
+requires-python = ">=3.11"
+dependencies = [
+    # API
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    # Database
+    "sqlalchemy[asyncio]>=2.0",
+    "psycopg[binary]>=3.1",
+    "alembic>=1.13",
+    # Config / Validation
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    # Vector DB
+    "qdrant-client>=1.7",
+    # Task Queue
+    "celery[redis]>=5.3",
+    "redis>=5.0",
+    "flower>=2.0",
+    # Ingestion
+    "httpx>=0.26",
+    "feedparser>=6.0",
+    "beautifulsoup4>=4.12",
+    # Market Data
+    "alpaca-py>=0.21",
+    "yfinance>=0.2",
+    # Calendar
+    "exchange-calendars>=4.5",
+    # MCP
+    "mcp>=1.0",
+]
+
+[project.optional-dependencies]
+sentiment = [
+    "transformers>=4.36",
+    "torch>=2.1",
+]
+backtest = [
+    "vectorbt>=0.26",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "faiss-cpu>=1.7",
+    "aiosqlite>=0.19",
+    "ruff>=0.2",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.setuptools.packages.find]
+include = ["core*", "apps*"]

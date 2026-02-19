@@ -1,0 +1,1 @@
+"""Regex-based ticker extraction."""

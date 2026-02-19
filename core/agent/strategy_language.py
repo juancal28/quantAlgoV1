@@ -1,0 +1,1 @@
+"""Strategy JSON spec definition."""
