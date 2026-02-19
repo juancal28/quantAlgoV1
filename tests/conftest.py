@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import uuid as _uuid
 
 # Set test env vars BEFORE any application imports
 os.environ.setdefault("APP_ENV", "test")
@@ -14,12 +15,18 @@ os.environ.setdefault("QDRANT_URL", "http://localhost:6333")
 os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 os.environ.setdefault("PAPER_GUARD", "true")
 
+import sqlite3
+
 import pytest
 from sqlalchemy import JSON, String, event
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from core.config import _reset_settings, get_settings
 from core.storage.models import Base
+
+# Register UUID adapter for sqlite3 so it knows how to bind uuid.UUID objects
+sqlite3.register_adapter(_uuid.UUID, lambda u: str(u))
+sqlite3.register_converter("UUID", lambda b: _uuid.UUID(b.decode()))
 
 
 @pytest.fixture(autouse=True)
