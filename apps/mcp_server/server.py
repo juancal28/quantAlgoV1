@@ -18,6 +18,7 @@ from apps.mcp_server.schemas import (
     QueryInput,
     RecentNewsInput,
     RecentRunsInput,
+    RunBacktestInput,
     SentimentInput,
     StrategyOverviewInput,
     SubmitStrategyInput,
@@ -97,6 +98,11 @@ async def list_tools() -> list[Tool]:
             description="Submit a validated strategy for human approval (status=pending_approval)",
             inputSchema=SubmitStrategyInput.model_json_schema(),
         ),
+        Tool(
+            name="run_backtest",
+            description="Run a backtest on a strategy definition over a date range",
+            inputSchema=RunBacktestInput.model_json_schema(),
+        ),
     ]
 
 
@@ -114,6 +120,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         get_system_health,
     )
     from apps.mcp_server.tools.sentiment import score_sentiment
+    from apps.mcp_server.tools.backtest import run_backtest_tool
     from apps.mcp_server.tools.strategy import (
         propose_strategy,
         submit_strategy,
@@ -145,6 +152,8 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await validate_strategy_tool(ValidateStrategyInput(**arguments))
         elif name == "submit_strategy_for_approval":
             result = await submit_strategy(session, SubmitStrategyInput(**arguments))
+        elif name == "run_backtest":
+            result = await run_backtest_tool(session, RunBacktestInput(**arguments))
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

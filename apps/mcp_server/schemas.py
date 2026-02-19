@@ -189,3 +189,26 @@ class SubmitStrategyInput(BaseModel):
 class SubmitStrategyOutput(BaseModel):
     strategy_version_id: str
     status: str
+
+
+# --- run_backtest ---
+
+class RunBacktestInput(BaseModel):
+    definition_json: dict[str, Any] = Field(description="Strategy definition to backtest")
+    start: str = Field(description="Start date (YYYY-MM-DD)")
+    end: str = Field(description="End date (YYYY-MM-DD)")
+
+
+class BacktestMetricsOutput(BaseModel):
+    cagr: float
+    sharpe: float
+    max_drawdown: float
+    win_rate: float
+    turnover: float
+    avg_trade_return: float
+
+
+class RunBacktestOutput(BaseModel):
+    metrics: BacktestMetricsOutput
+    passed: bool
+    equity_curve_path: str | None = None
