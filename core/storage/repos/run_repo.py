@@ -45,6 +45,14 @@ async def complete_run(
     return run
 
 
+async def get_by_id(
+    session: AsyncSession,
+    run_id: uuid.UUID,
+) -> Run | None:
+    """Fetch a single run by primary key."""
+    return await session.get(Run, run_id)
+
+
 async def get_latest_by_type(
     session: AsyncSession,
     run_type: str,
