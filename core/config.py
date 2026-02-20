@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     PAPER_INITIAL_CASH: float = 100_000
     PAPER_GUARD: bool = True
     TRADING_MODE: str = "paper"
+    BROKER_PROVIDER: str = "internal"  # "internal" | "alpaca"
 
     # LLM (RAG Agent)
     LLM_PROVIDER: str = "anthropic"

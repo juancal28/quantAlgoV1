@@ -59,3 +59,19 @@ class BrokerBase(abc.ABC):
     def get_orders(self) -> list[Order]:
         """Return all orders submitted in this session."""
         ...
+
+    @property
+    @abc.abstractmethod
+    def realized_pnl(self) -> float:
+        """Return cumulative realized PnL."""
+        ...
+
+    @abc.abstractmethod
+    def unrealized_pnl(self, current_prices: dict[str, float]) -> float:
+        """Return total unrealized PnL given current market prices."""
+        ...
+
+    @abc.abstractmethod
+    def gross_exposure(self, current_prices: dict[str, float]) -> float:
+        """Return gross exposure as sum of absolute position market values."""
+        ...

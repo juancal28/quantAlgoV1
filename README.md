@@ -193,6 +193,8 @@ Key settings:
 | `PAPER_INITIAL_CASH` | `100000` | Starting paper portfolio value |
 | `RISK_MAX_DAILY_LOSS_PCT` | `0.02` | Circuit breaker threshold (2%) |
 | `RISK_MAX_POSITION_PCT` | `0.10` | Max single position size (10%) |
+| `BROKER_PROVIDER` | `internal` | `internal` or `alpaca` (paper broker backend) |
+| `ANTHROPIC_API_KEY` | *(empty)* | Required for RAG agent LLM calls |
 | `EMBEDDINGS_PROVIDER` | `mock` | `mock` or `openai` |
 | `SENTIMENT_PROVIDER` | `finbert` | `finbert`, `llm`, or `mock` |
 | `STRATEGY_APPROVED_UNIVERSE` | `SPY,QQQ,...` | Allowed tickers for strategies |
@@ -200,7 +202,7 @@ Key settings:
 
 ## Running Tests
 
-All tests run with mocks — no external services required:
+143 tests across 20 test files. All tests run with mocks — no external services required:
 
 ```bash
 pytest
@@ -227,6 +229,11 @@ The system exposes an MCP (Model Context Protocol) tool server for programmatic 
 | `run_backtest` | Backtest a strategy definition |
 | `submit_strategy_for_approval` | Submit a validated strategy for human approval |
 | `paper_trade_tick` | Execute one paper trading tick |
+| `get_system_health` | Read-only: system health, trading mode, market status |
+| `get_strategy_overview` | Read-only: all strategies with status and metrics |
+| `get_recent_runs` | Read-only: recent pipeline run history |
+| `get_pnl_summary` | Read-only: daily PnL snapshots for a strategy |
+| `get_recent_news_summary` | Read-only: recent news with sentiment scores |
 
 ## Known Limitations (v1)
 

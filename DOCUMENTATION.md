@@ -164,31 +164,31 @@ Dependency rule:
 | Sentiment | FinBERT (local) | Finance-tuned sentiment scoring |
 | Market Data | Alpaca API / yfinance | Historical + real-time OHLCV bars |
 | Backtesting | vectorbt / backtrader | Strategy simulation (adapter pattern, swappable) |
-| Broker | PaperBroker (internal) | Simulated order execution |
+| Broker | PaperBroker (internal) or AlpacaPaperBroker | Simulated order execution. Controlled by `BROKER_PROVIDER` (`internal` or `alpaca`). |
 
 ---
 
 ## 3. Build Status
 
-The project is being built in 12 phases. Here is the current state:
+The project was built in 12 phases. All phases are complete:
 
 | Phase | Description | Status |
 |---|---|---|
 | 1 | Scaffold + config + logging | **Complete** |
 | 2 | Postgres models + Alembic migration | **Complete** |
-| 3 | Market data ingestion | Stub |
-| 4 | News ingestion (RSS, dedup, ticker extraction) | Stub |
+| 3 | Market data ingestion | **Complete** |
+| 4 | News ingestion (RSS, dedup, ticker extraction) | **Complete** |
 | 5 | Chunking + embeddings + vectorstore | **Complete** |
-| 5b | Sentiment scoring | Stub |
-| 6 | MCP server tools 1–4 | Stub |
-| 7 | RAG agent + strategy validator | Stub |
-| 8 | Backtest engine + cost model | Stub |
-| 9 | Strategy versioning + approval API | Stub |
-| 10 | Paper broker + risk + circuit breaker | Stub |
-| 11 | FastAPI endpoints + Celery scheduler | Stub |
-| 12 | Tests + documentation | In progress |
+| 5b | Sentiment scoring | **Complete** |
+| 6 | MCP server tools 1–4 | **Complete** |
+| 7 | RAG agent + strategy validator | **Complete** |
+| 8 | Backtest engine + cost model | **Complete** |
+| 9 | Strategy versioning + approval API | **Complete** |
+| 10 | Paper broker + risk + circuit breaker | **Complete** |
+| 11 | FastAPI endpoints + Celery scheduler | **Complete** |
+| 12 | Tests + documentation | **Complete** |
 
-**Summary:** 14 of 60 Python files are implemented (23%). The foundation layer (config, database, vector DB) is complete. All business logic modules are scaffolded as stubs with correct file paths and package structure.
+**Summary:** 58 of 61 Python files are implemented (95%). 143 tests passing across 20 test files. The 3 remaining placeholders are `observability/metrics.py`, `observability/tracing.py`, and `provider_newsapi.py` (deferred to v2).
 
 ---
 
@@ -323,6 +323,12 @@ All configuration is managed through environment variables loaded from a `.env` 
 | `STRATEGY_MAX_ACTIVATIONS_PER_DAY` | `4` | Max strategy activations in a 24-hour window |
 | `STRATEGY_MIN_BACKTEST_DAYS` | `252` | Minimum backtest window (252 trading days ≈ 1 year) |
 | `PENDING_APPROVAL_AUTO_APPROVE_MINUTES` | `0` | 0 = never auto-approve; N = auto-approve after N minutes |
+
+### Broker
+
+| Variable | Default | Description |
+|---|---|---|
+| `BROKER_PROVIDER` | `internal` | Paper broker backend: `internal` (built-in PaperBroker) or `alpaca` (AlpacaPaperBroker via Alpaca paper API) |
 
 ### Backtest Thresholds
 
@@ -571,6 +577,15 @@ Every 1 minute during NYSE market hours (9:30 AM – 4:00 PM ET):
         → Log a critical warning
      └─ Circuit breaker state survives restarts because it's in the DB
 ```
+
+### Broker Backend
+
+Two paper broker implementations are available, controlled by `BROKER_PROVIDER`:
+
+- **`internal`** (default) — Built-in `PaperBroker` that simulates orders in-memory with instant fills, slippage, and commission. No external API needed.
+- **`alpaca`** — `AlpacaPaperBroker` that routes orders through Alpaca's paper trading API. Requires `ALPACA_API_KEY` and `ALPACA_API_SECRET`. Provides more realistic fill simulation via Alpaca's infrastructure.
+
+Both brokers implement the same `BrokerBase` interface and are subject to `PAPER_GUARD` enforcement.
 
 ### Starting Capital
 
@@ -938,6 +953,7 @@ quantAlgoV1/
 ├── CLAUDE.md                          # Build spec (instructions for AI)
 ├── PROJECT.md                         # Full project requirements
 ├── DOCUMENTATION.md                   # This file
+├── README.md                          # Project overview and quickstart
 ├── pyproject.toml                     # Dependencies and project config
 ├── .env.example                       # Template for environment variables
 ├── docker-compose.yml                 # Postgres, Redis, Qdrant, Flower
@@ -965,102 +981,128 @@ quantAlgoV1/
 │   │
 │   ├── ingestion/
 │   │   ├── fetchers/
-│   │   │   ├── base.py               # 🔲 Fetcher interface
-│   │   │   ├── rss.py                # 🔲 RSS feed fetcher
-│   │   │   ├── market_data.py        # 🔲 Alpaca / yfinance fetcher
-│   │   │   └── provider_newsapi.py   # 🔲 NewsAPI fetcher
-│   │   ├── normalize.py              # 🔲 Text normalization
-│   │   ├── dedupe.py                 # 🔲 SHA-256 deduplication
-│   │   └── ticker_extract.py         # 🔲 Regex ticker extraction
+│   │   │   ├── base.py               # ✅ Fetcher interface
+│   │   │   ├── rss.py                # ✅ RSS feed fetcher
+│   │   │   ├── market_data.py        # ✅ Alpaca / yfinance fetcher
+│   │   │   └── provider_newsapi.py   # 🔲 NewsAPI fetcher (deferred to v2)
+│   │   ├── normalize.py              # ✅ Text normalization
+│   │   ├── dedupe.py                 # ✅ SHA-256 deduplication
+│   │   └── ticker_extract.py         # ✅ Regex ticker extraction
 │   │
 │   ├── kb/
 │   │   ├── vectorstore.py            # ✅ Qdrant + FAISS mock
 │   │   ├── chunking.py               # ✅ Deterministic text chunking
 │   │   ├── embeddings.py             # ✅ Mock + OpenAI providers
 │   │   ├── retrieval.py              # ✅ Query knowledge base
-│   │   └── sentiment.py              # 🔲 FinBERT / LLM scoring
+│   │   └── sentiment.py              # ✅ FinBERT / LLM scoring
 │   │
 │   ├── agent/
-│   │   ├── rag_agent.py              # 🔲 RAG agent
-│   │   ├── prompts.py                # 🔲 Versioned prompt constants
-│   │   ├── strategy_language.py      # 🔲 Strategy JSON spec
-│   │   ├── validator.py              # 🔲 Strategy validator
-│   │   └── approval.py               # 🔲 Approval gate
+│   │   ├── rag_agent.py              # ✅ RAG agent
+│   │   ├── prompts.py                # ✅ Versioned prompt constants
+│   │   ├── strategy_language.py      # ✅ Strategy JSON spec
+│   │   ├── validator.py              # ✅ Strategy validator
+│   │   └── approval.py               # ✅ Approval gate
 │   │
 │   ├── strategies/
-│   │   ├── base.py                   # 🔲 Strategy interface
-│   │   ├── registry.py               # 🔲 Strategy registry
+│   │   ├── base.py                   # ✅ Strategy interface
+│   │   ├── registry.py               # ✅ Strategy registry
 │   │   └── implementations/
-│   │       ├── sentiment_momentum.py # 🔲 Sentiment momentum strategy
-│   │       └── event_risk_off.py     # 🔲 Event risk-off strategy
+│   │       ├── sentiment_momentum.py # ✅ Sentiment momentum strategy
+│   │       └── event_risk_off.py     # ✅ Event risk-off strategy
 │   │
 │   ├── backtesting/
-│   │   ├── engine.py                 # 🔲 Backtesting engine
-│   │   ├── metrics.py                # 🔲 Metrics calculation
-│   │   └── cost_model.py             # 🔲 Trading cost model
+│   │   ├── engine.py                 # ✅ Backtesting engine (BuiltinEngine)
+│   │   ├── metrics.py                # ✅ Metrics calculation
+│   │   └── cost_model.py             # ✅ Trading cost model
 │   │
 │   ├── execution/
-│   │   ├── broker_base.py            # 🔲 Broker interface
-│   │   ├── paper_broker.py           # 🔲 Paper trading broker
-│   │   ├── guard.py                  # 🔲 PAPER_GUARD enforcement
-│   │   ├── alpaca_paper.py           # 🔲 Alpaca paper broker
-│   │   ├── risk.py                   # 🔲 Risk management
-│   │   └── position_sizing.py        # 🔲 Position sizing
+│   │   ├── broker_base.py            # ✅ Broker interface
+│   │   ├── paper_broker.py           # ✅ Paper trading broker
+│   │   ├── guard.py                  # ✅ PAPER_GUARD enforcement
+│   │   ├── alpaca_paper.py           # ✅ Alpaca paper broker
+│   │   ├── risk.py                   # ✅ Risk management + circuit breaker
+│   │   └── position_sizing.py        # ✅ Position sizing
 │   │
 │   └── observability/
-│       ├── metrics.py                # 🔲 App metrics
-│       └── tracing.py                # 🔲 Distributed tracing
+│       ├── metrics.py                # 🔲 App metrics (deferred to v2)
+│       └── tracing.py                # 🔲 Distributed tracing (deferred to v2)
 │
 ├── apps/                             # THIN WRAPPERS — NO BUSINESS LOGIC
 │   ├── api/
-│   │   ├── main.py                   # 🔲 FastAPI app
-│   │   ├── deps.py                   # 🔲 Dependency injection
+│   │   ├── main.py                   # ✅ FastAPI app
+│   │   ├── deps.py                   # ✅ Dependency injection
 │   │   └── routers/
-│   │       ├── health.py             # 🔲 GET /health
-│   │       ├── news.py               # 🔲 GET /news/recent
-│   │       ├── strategies.py         # 🔲 Strategy CRUD + approval
-│   │       ├── backtests.py          # 🔲 POST /strategies/{name}/backtest
-│   │       ├── runs.py               # 🔲 GET /runs/recent
-│   │       └── pnl.py               # 🔲 GET /pnl/daily
+│   │       ├── health.py             # ✅ GET /health
+│   │       ├── news.py               # ✅ GET /news/recent
+│   │       ├── strategies.py         # ✅ Strategy CRUD + approval
+│   │       ├── backtests.py          # ✅ POST /strategies/{name}/backtest
+│   │       ├── runs.py               # ✅ GET /runs/recent, POST /runs/news_cycle
+│   │       └── pnl.py               # ✅ GET /pnl/daily
 │   │
 │   ├── mcp_server/
-│   │   ├── server.py                 # 🔲 MCP stdio server
-│   │   ├── schemas.py                # 🔲 Tool schemas
+│   │   ├── server.py                 # ✅ MCP stdio server
+│   │   ├── schemas.py                # ✅ Tool schemas
 │   │   └── tools/
-│   │       ├── ingest.py             # 🔲 ingest_latest_news
-│   │       ├── kb.py                 # 🔲 embed_and_upsert_docs, query_kb
-│   │       ├── sentiment.py          # 🔲 score_sentiment
-│   │       ├── strategy.py           # 🔲 propose/validate/submit strategy
-│   │       ├── backtest.py           # 🔲 run_backtest
-│   │       └── execution.py          # 🔲 paper_trade_tick
+│   │       ├── ingest.py             # ✅ ingest_latest_news
+│   │       ├── kb.py                 # ✅ embed_and_upsert_docs, query_kb
+│   │       ├── sentiment.py          # ✅ score_sentiment
+│   │       ├── strategy.py           # ✅ propose/validate/submit strategy
+│   │       ├── backtest.py           # ✅ run_backtest
+│   │       ├── execution.py          # ✅ paper_trade_tick
+│   │       └── monitoring.py         # ✅ 5 read-only monitoring tools
 │   │
 │   └── scheduler/
-│       ├── worker.py                 # 🔲 Celery worker config
-│       └── jobs.py                   # 🔲 Scheduled pipeline jobs
+│       ├── worker.py                 # ✅ Celery worker config + beat schedule
+│       └── jobs.py                   # ✅ Scheduled pipeline jobs (news_cycle, paper_trade_tick)
 │
-└── tests/
+└── tests/                            # 143 tests across 20 test files
     ├── conftest.py                   # ✅ Fixtures (SQLite, mock config)
-    └── test_smoke.py                 # ✅ 7 passing smoke tests
+    ├── test_smoke.py                 # ✅ Import + config smoke tests
+    ├── test_dedupe.py                # ✅ Deduplication logic
+    ├── test_ticker_extract.py        # ✅ Ticker regex extraction
+    ├── test_market_data.py           # ✅ Market data fetcher + repo
+    ├── test_mcp_tools.py             # ✅ MCP pipeline tools
+    ├── test_monitoring_tools.py      # ✅ MCP monitoring tools
+    ├── test_strategy_validator.py    # ✅ Strategy validation rules
+    ├── test_backtest_smoke.py        # ✅ Backtest engine + metrics
+    ├── test_approval_gate.py         # ✅ Approval workflow
+    ├── test_risk_circuit_breaker.py  # ✅ Circuit breaker + DB rehydration
+    ├── test_paper_guard.py           # ✅ PAPER_GUARD enforcement
+    ├── test_market_hours.py          # ✅ Market hours + no-op outside hours
+    ├── test_api_strategies.py        # ✅ Strategy API endpoints
+    ├── test_api_news.py              # ✅ News API endpoints
+    ├── test_api_pnl.py               # ✅ PnL API endpoints
+    ├── test_api_runs.py              # ✅ Runs API endpoints
+    ├── test_api_backtests.py         # ✅ Backtest API endpoints
+    ├── test_scheduler_jobs.py        # ✅ Celery task wiring
+    └── test_alpaca_paper.py          # ✅ AlpacaPaperBroker + BROKER_PROVIDER
 
-✅ = Implemented    🔲 = Stub (not yet implemented)
+✅ = Implemented    🔲 = Placeholder (deferred to v2)
 ```
 
 ---
 
-## 16. Remaining Build Phases
+## 16. Build Phases — All Complete
 
-| Phase | What Gets Built | Key Outcome |
+All 12 build phases have been completed. The system is functionally complete and ready for local validation (Stage 1 of the deployment roadmap).
+
+| Phase | What Was Built | Status |
 |---|---|---|
-| **3** | Market data fetcher (Alpaca + yfinance) | Can pull OHLCV bars into Postgres |
-| **4** | News ingestion (RSS fetch, normalize, dedup, ticker extract) | Can ingest articles from RSS feeds |
-| **5b** | Sentiment scoring (FinBERT) | Articles get positive/negative/neutral scores |
-| **6** | MCP tools 1–4 (ingest, embed, sentiment, query) | Pipeline steps callable as MCP tools |
-| **7** | RAG agent + strategy language + validator | AI can propose and validate strategy changes |
-| **8** | Backtest engine + cost model + metrics | Can simulate strategies on historical data |
-| **9** | Strategy versioning + approval API endpoint | Human approval workflow is functional |
-| **10** | Paper broker + risk management + circuit breaker | Can simulate trades with fake money |
-| **11** | FastAPI endpoints + Celery scheduler wiring | Full API and automated pipeline |
-| **12** | Comprehensive tests + documentation polish | Production-ready test suite |
+| **1** | Scaffold + config + logging | **Complete** |
+| **2** | Postgres models + Alembic migration | **Complete** |
+| **3** | Market data fetcher (Alpaca + yfinance) | **Complete** |
+| **4** | News ingestion (RSS fetch, normalize, dedup, ticker extract) | **Complete** |
+| **5** | Chunking + embeddings + vectorstore | **Complete** |
+| **5b** | Sentiment scoring (FinBERT / mock) | **Complete** |
+| **6** | MCP tools 1–4 (ingest, embed, sentiment, query) | **Complete** |
+| **7** | RAG agent + strategy language + validator + approval gate | **Complete** |
+| **8** | Backtest engine + cost model + metrics | **Complete** |
+| **9** | Strategy versioning + approval API | **Complete** |
+| **10** | Paper broker + risk management + circuit breaker + PnL persistence | **Complete** |
+| **11** | FastAPI endpoints (10 routes) + Celery scheduler (2 periodic tasks) | **Complete** |
+| **12** | 143 tests across 20 test files + documentation polish | **Complete** |
+
+**Deferred to v2:** `observability/metrics.py`, `observability/tracing.py` (Prometheus/OpenTelemetry), `provider_newsapi.py` (NewsAPI fetcher).
 
 ---
 

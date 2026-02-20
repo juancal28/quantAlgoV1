@@ -11,15 +11,16 @@ from apps.mcp_server.schemas import (
     PaperTradeTickInput,
     PaperTradeTickOutput,
 )
-from core.execution.paper_broker import PaperBroker
+from core.execution.alpaca_paper import get_broker
+from core.execution.broker_base import BrokerBase
 from core.execution.risk import DailyLossCircuitBreaker
 from core.logging import get_logger
 from core.timeutils import is_market_open
 
 logger = get_logger(__name__)
 
-# Module-level broker cache: one PaperBroker per strategy
-_brokers: dict[str, PaperBroker] = {}
+# Module-level broker cache: one broker per strategy
+_brokers: dict[str, BrokerBase] = {}
 
 
 def _reset_brokers() -> None:
@@ -65,7 +66,7 @@ async def paper_trade_tick(
 
     # 3. Get or create PaperBroker
     if params.strategy_name not in _brokers:
-        _brokers[params.strategy_name] = PaperBroker()
+        _brokers[params.strategy_name] = get_broker()
     broker = _brokers[params.strategy_name]
 
     # 4. Rehydrate circuit breaker from DB
