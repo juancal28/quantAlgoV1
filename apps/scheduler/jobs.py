@@ -29,7 +29,9 @@ logger = get_logger(__name__)
     retry_backoff_max=300,
     name="apps.scheduler.jobs.run_news_cycle",
 )
-def run_news_cycle(self, run_id: str | None = None) -> dict:
+def run_news_cycle(
+    self, run_id: str | None = None, agent_name: str | None = None
+) -> dict:
     """Execute the full news cycle pipeline.
 
     Steps:
@@ -41,19 +43,27 @@ def run_news_cycle(self, run_id: str | None = None) -> dict:
     6. run_backtest (in-sample)
     7. run_backtest (out-of-sample)
     8. submit_strategy_for_approval (if both pass)
+
+    Args:
+        run_id: Optional pre-created run ID.
+        agent_name: Optional agent name from AGENT_CONFIGS. When provided,
+            uses the agent's feeds, Qdrant collection, and strategy name.
     """
-    return asyncio.run(_run_news_cycle_async(run_id))
+    return asyncio.run(_run_news_cycle_async(run_id, agent_name=agent_name))
 
 
 async def _run_news_cycle_async(
     run_id: str | None = None,
     _session: AsyncSession | None = None,
+    agent_name: str | None = None,
 ) -> dict:
     """Async implementation of the news cycle pipeline.
 
     Args:
         run_id: Optional pre-created run ID to associate with this cycle.
         _session: Optional session for testing. If None, creates one via get_session().
+        agent_name: Optional agent name. When set, uses the agent's feeds,
+            Qdrant collection, and strategy name from AGENT_CONFIGS.
     """
     from apps.mcp_server.schemas import (
         EmbedInput,
@@ -73,10 +83,34 @@ async def _run_news_cycle_async(
         submit_strategy,
         validate_strategy_tool,
     )
+    from core.ingestion.fetchers.rss import RSSFetcher
+    from core.kb.vectorstore import get_vectorstore
     from core.storage.repos import run_repo
 
     settings = get_settings()
     details: dict = {}
+
+    # Resolve agent config
+    agent_cfg = None
+    if agent_name:
+        for cfg in settings.parsed_agent_configs:
+            if cfg.name == agent_name:
+                agent_cfg = cfg
+                break
+        if agent_cfg is None:
+            raise ValueError(f"Agent '{agent_name}' not found in AGENT_CONFIGS")
+        details["agent_name"] = agent_name
+
+    # Determine agent-specific or global values
+    strategy_name = agent_cfg.strategy_name if agent_cfg else "sentiment_momentum_v1"
+    feed_urls: list[str] | None = None
+    if agent_cfg:
+        feed_urls = RSSFetcher._parse_feed_urls(agent_cfg.news_sources)
+
+    # Build agent-specific vectorstore (or default)
+    store = None
+    if agent_cfg:
+        store = get_vectorstore(collection_name=agent_cfg.qdrant_collection)
 
     async def _execute(session: AsyncSession) -> dict:
         nonlocal details
@@ -91,7 +125,11 @@ async def _run_news_cycle_async(
 
             # 1. Ingest latest news
             ingest_result = await ingest_latest_news(
-                session, IngestInput(max_items=settings.MAX_DOCS_PER_POLL)
+                session,
+                IngestInput(
+                    max_items=settings.MAX_DOCS_PER_POLL,
+                    feed_urls=feed_urls,
+                ),
             )
             details["ingested"] = ingest_result.ingested
             details["doc_ids"] = ingest_result.doc_ids
@@ -102,9 +140,9 @@ async def _run_news_cycle_async(
                 await session.flush()
                 return details
 
-            # 2. Embed and upsert
+            # 2. Embed and upsert (with agent-specific store if set)
             embed_result = await embed_and_upsert_docs(
-                session, EmbedInput(doc_ids=ingest_result.doc_ids)
+                session, EmbedInput(doc_ids=ingest_result.doc_ids), store=store
             )
             details["upserted_chunks"] = embed_result.upserted_chunks
 
@@ -114,13 +152,14 @@ async def _run_news_cycle_async(
             )
             details["scored"] = sentiment_result.scored
 
-            # 4. Propose strategy update
+            # 4. Propose strategy update (with agent-specific store if set)
             proposal_result = await propose_strategy(
                 session,
                 ProposeStrategyInput(
-                    strategy_name="sentiment_momentum_v1",
+                    strategy_name=strategy_name,
                     recent_minutes=settings.NEWS_POLL_INTERVAL_SECONDS,
                 ),
+                store=store,
             )
             proposal = proposal_result.proposal
             confidence = proposal.get("confidence", 0.0)
@@ -178,7 +217,7 @@ async def _run_news_cycle_async(
                 submit_result = await submit_strategy(
                     session,
                     SubmitStrategyInput(
-                        strategy_name=new_definition.get("name", "sentiment_momentum_v1"),
+                        strategy_name=new_definition.get("name", strategy_name),
                         definition_json=new_definition,
                         reason=proposal.get("rationale", "Agent-proposed update"),
                         backtest_metrics={

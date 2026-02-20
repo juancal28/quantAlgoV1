@@ -1,3 +1,7 @@
+# Local development services. For cloud deployment, replace DATABASE_URL,
+# QDRANT_URL (+QDRANT_API_KEY), and REDIS_URL in .env with managed service
+# URLs (Neon, Qdrant Cloud, Upstash) — no Docker containers needed.
+
 version: "3.9"
 
 services:

@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 class IngestInput(BaseModel):
     max_items: int = Field(default=50, description="Max articles to fetch")
+    feed_urls: list[str] | None = Field(default=None, description="Override RSS feed URLs")
 
 
 class IngestOutput(BaseModel):

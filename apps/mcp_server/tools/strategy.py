@@ -15,13 +15,16 @@ from apps.mcp_server.schemas import (
 from core.agent.approval import submit_for_approval
 from core.agent.rag_agent import AnthropicLLMClient, propose_strategy_update
 from core.agent.validator import validate_strategy
-from core.kb.embeddings import get_embedding_provider
-from core.kb.vectorstore import get_vectorstore
+from core.kb.embeddings import EmbeddingProvider, get_embedding_provider
+from core.kb.vectorstore import VectorStoreBase, get_vectorstore
 from core.storage.repos import strategy_repo
 
 
 async def propose_strategy(
-    session: AsyncSession, params: ProposeStrategyInput
+    session: AsyncSession,
+    params: ProposeStrategyInput,
+    store: VectorStoreBase | None = None,
+    embedder: EmbeddingProvider | None = None,
 ) -> ProposeStrategyOutput:
     """Query KB and LLM to propose a strategy update."""
     # Get current active definition if it exists
@@ -29,8 +32,10 @@ async def propose_strategy(
     current_definition = active.definition if active else None
 
     llm_client = AnthropicLLMClient()
-    store = get_vectorstore()
-    embedder = get_embedding_provider()
+    if store is None:
+        store = get_vectorstore()
+    if embedder is None:
+        embedder = get_embedding_provider()
 
     proposal = await propose_strategy_update(
         strategy_name=params.strategy_name,

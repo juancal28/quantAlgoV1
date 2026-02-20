@@ -26,7 +26,9 @@ async def ingest_latest_news(
     Returns the count and IDs of newly ingested documents.
     """
     fetcher = RSSFetcher()
-    articles = await fetcher.fetch(max_items=params.max_items)
+    articles = await fetcher.fetch(
+        feed_urls=params.feed_urls, max_items=params.max_items
+    )
     logger.info("Fetched %d raw articles", len(articles))
 
     ingested_ids: list[str] = []

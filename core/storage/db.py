@@ -24,6 +24,9 @@ def _get_engine():
             settings.DATABASE_URL,
             echo=(settings.APP_ENV == "dev"),
             pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=5,
+            pool_recycle=300,
         )
     return _engine
 

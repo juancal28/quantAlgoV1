@@ -2,12 +2,23 @@
 
 from __future__ import annotations
 
+import json
 import sys
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class AgentConfig(BaseModel):
+    """Configuration for a single RAG agent focused on a market segment."""
+
+    name: str
+    strategy_name: str
+    universe: list[str]
+    news_sources: str
+    qdrant_collection: str
 
 
 class Settings(BaseSettings):
@@ -25,6 +36,7 @@ class Settings(BaseSettings):
 
     # Vector DB
     QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: str = ""  # required for Qdrant Cloud
 
     # Redis
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -91,10 +103,19 @@ class Settings(BaseSettings):
     BACKTEST_MAX_DRAWDOWN: float = Field(default=0.25)
     BACKTEST_MIN_WIN_RATE: float = Field(default=0.40)
 
+    # Multi-agent
+    AGENT_CONFIGS: str = "[]"
+
     @property
     def approved_universe_list(self) -> list[str]:
         """Parse STRATEGY_APPROVED_UNIVERSE CSV into a list."""
         return [t.strip() for t in self.STRATEGY_APPROVED_UNIVERSE.split(",") if t.strip()]
+
+    @property
+    def parsed_agent_configs(self) -> list[AgentConfig]:
+        """Parse AGENT_CONFIGS JSON string into a list of AgentConfig."""
+        raw = json.loads(self.AGENT_CONFIGS)
+        return [AgentConfig.model_validate(item) for item in raw]
 
 
 _settings: Optional[Settings] = None

@@ -40,12 +40,15 @@ class VectorStoreBase(abc.ABC):
 class QdrantVectorStore(VectorStoreBase):
     """Qdrant-backed vector store using the async client."""
 
-    def __init__(self) -> None:
+    def __init__(self, collection_name: str | None = None) -> None:
         from qdrant_client import AsyncQdrantClient
 
         settings = get_settings()
-        self._client = AsyncQdrantClient(url=settings.QDRANT_URL)
-        self._collection = settings.VECTOR_COLLECTION
+        self._client = AsyncQdrantClient(
+            url=settings.QDRANT_URL,
+            api_key=settings.QDRANT_API_KEY or None,
+        )
+        self._collection = collection_name or settings.VECTOR_COLLECTION
         self._vector_size = settings.VECTOR_SIZE
 
     async def ensure_collection(self) -> None:
@@ -191,8 +194,10 @@ class FAISSMockVectorStore(VectorStoreBase):
         return results
 
 
-def get_vectorstore(use_mock: bool = False) -> VectorStoreBase:
+def get_vectorstore(
+    use_mock: bool = False, collection_name: str | None = None
+) -> VectorStoreBase:
     """Factory that returns the appropriate vector store."""
     if use_mock:
         return FAISSMockVectorStore()
-    return QdrantVectorStore()
+    return QdrantVectorStore(collection_name=collection_name)
