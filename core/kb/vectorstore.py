@@ -52,8 +52,8 @@ class QdrantVectorStore(VectorStoreBase):
         from qdrant_client.models import (
             Distance,
             OptimizersConfigDiff,
-            QuantizationConfig,
             ScalarQuantization,
+            ScalarQuantizationConfig,
             ScalarType,
             VectorParams,
         )
@@ -68,8 +68,8 @@ class QdrantVectorStore(VectorStoreBase):
                     distance=Distance.COSINE,
                 ),
                 optimizers_config=OptimizersConfigDiff(default_segment_number=2),
-                quantization_config=QuantizationConfig(
-                    scalar=ScalarQuantization(
+                quantization_config=ScalarQuantization(
+                    scalar=ScalarQuantizationConfig(
                         type=ScalarType.INT8,
                         always_ram=True,
                     ),

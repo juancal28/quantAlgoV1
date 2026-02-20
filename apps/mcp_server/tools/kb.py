@@ -52,7 +52,12 @@ async def embed_and_upsert_docs(
 
         vectors = await embedder.embed(chunks)
 
-        ids = [f"{doc_id_str}_chunk_{i}" for i in range(len(chunks))]
+        # Qdrant requires UUIDs or unsigned ints as point IDs.
+        # Generate deterministic UUIDs from doc_id + chunk_index.
+        ids = [
+            str(uuid.uuid5(uuid.UUID(doc_id_str), f"chunk_{i}"))
+            for i in range(len(chunks))
+        ]
         payloads = [
             {
                 "doc_id": doc_id_str,
