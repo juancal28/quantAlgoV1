@@ -8,10 +8,29 @@ A modular, **paper-only** quantitative trading system that ingests financial new
 Fetch news (RSS) → Dedupe & store → Embed into Qdrant → Score sentiment
   → RAG agent proposes strategy update → Validator checks rules
   → Backtest (in-sample + out-of-sample) → Submit for human approval
-  → Human approves via API → Paper broker executes → PnL tracked in DB
+  → Human approves via API → Signal engine evaluates → Paper broker executes
+  → PnL tracked in DB → Circuit breaker monitors losses
 ```
 
 The full pipeline runs on a Celery schedule every 2 minutes (configurable). Paper trading ticks run every 60 seconds during market hours.
+
+### Signal Evaluation (paper_trade_tick)
+
+Once a strategy is approved and active, each paper trading tick follows this flow:
+
+1. **Check market hours** — no-op if NYSE is closed
+2. **Load active strategy** definition from Postgres
+3. **Fetch current prices** — via Alpaca Data API (`BROKER_PROVIDER=alpaca`) or from DB bars (`BROKER_PROVIDER=internal`). Prices use bar `open` to prevent lookahead bias. Stale data (older than `RISK_MAX_DATA_STALENESS_MINUTES`) is skipped.
+4. **Evaluate signals** (throttled by `rebalance_minutes` from strategy definition):
+   - **Volatility filter** (gate) — reads VIXY ETF price as VIX proxy. If above `max_vix`, all signals go flat (risk-off). Defaults to pass if no VIXY data.
+   - **News sentiment** — queries recent news from DB, groups sentiment scores by ticker, computes per-ticker average. Tickers above `threshold` get a "long" signal.
+5. **Reconcile positions** — compares target signals vs currently held positions to determine buys and sells
+6. **Execute orders** through the broker:
+   - Checks circuit breaker, exposure limits, and trade rate limits
+   - Sells first (to free up cash), then buys
+   - Position sizing via equal-weight with `RISK_MAX_POSITION_PCT` cap
+   - Whole shares only (fractional quantities are floored)
+7. **Persist PnL snapshot** to Postgres and check circuit breaker
 
 ## Prerequisites
 
@@ -163,7 +182,7 @@ core/            → All business logic (independently importable)
   kb/            → Embeddings, chunking, vector store, sentiment scoring
   agent/         → RAG agent, strategy language, validator, approval gate
   backtesting/   → Backtest engine, cost model, metrics
-  execution/     → Paper broker, risk checks, circuit breaker, position sizing
+  execution/     → Paper broker, signal evaluator, price feed, risk, position sizing
   strategies/    → Strategy base class, registry, built-in implementations
 ```
 
@@ -177,6 +196,7 @@ This system enforces multiple layers of safety:
 - **Paper guard**: Every broker method checks `PAPER_GUARD=true` before placing orders. Non-paper brokers raise `RuntimeError` immediately.
 - **Human approval gate**: RAG agent proposals always land in `pending_approval` status. Activation requires an explicit API call.
 - **Daily loss circuit breaker**: Persisted in Postgres (not memory). Halts all trading if daily loss exceeds the configured threshold (default 2%). Rehydrates on restart.
+- **Risk checks on every tick**: Exposure limits, per-position caps, trade rate limits, and data staleness checks are all enforced before any order is placed.
 - **Strategy validator**: Rejects proposals with unapproved tickers, risk limit violations, unknown signal types, or too many changed fields.
 - **Dual-window backtesting**: Both in-sample (252 days) and out-of-sample (90 days) must pass Sharpe, drawdown, and win rate thresholds before a proposal can be submitted.
 
@@ -193,7 +213,8 @@ Key settings:
 | `PAPER_INITIAL_CASH` | `100000` | Starting paper portfolio value |
 | `RISK_MAX_DAILY_LOSS_PCT` | `0.02` | Circuit breaker threshold (2%) |
 | `RISK_MAX_POSITION_PCT` | `0.10` | Max single position size (10%) |
-| `BROKER_PROVIDER` | `internal` | `internal` or `alpaca` (paper broker backend) |
+| `BROKER_PROVIDER` | `internal` | `internal` or `alpaca` (paper broker + price feed backend) |
+| `RISK_MAX_DATA_STALENESS_MINUTES` | `30` | Skip price data older than this (minutes) |
 | `ANTHROPIC_API_KEY` | *(empty)* | Required for RAG agent LLM calls |
 | `EMBEDDINGS_PROVIDER` | `mock` | `mock` or `openai` |
 | `SENTIMENT_PROVIDER` | `finbert` | `finbert`, `llm`, or `mock` |
@@ -202,7 +223,7 @@ Key settings:
 
 ## Running Tests
 
-143 tests across 20 test files. All tests run with mocks — no external services required:
+174 tests across 22 test files. All tests run with mocks — no external services required:
 
 ```bash
 pytest
@@ -242,6 +263,8 @@ The system exposes an MCP (Model Context Protocol) tool server for programmatic 
 - Market data uses daily bars by default; intraday signals may not be fully representable.
 - The RAG agent's confidence scores are self-reported and not calibrated.
 - No portfolio-level risk management across multiple simultaneous strategies.
+- VIX proxy uses VIXY ETF price (real VIX index not available via Alpaca data API). Degrades gracefully (defaults to pass) if no data.
+- No fractional share support; order quantities are floored to whole shares.
 
 ## Disclaimer
 

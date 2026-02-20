@@ -456,6 +456,8 @@ quant-news-rag/
       alpaca_paper.py
       risk.py
       position_sizing.py
+      price_feed.py                ← real-time price abstraction (Alpaca, DB, Mock)
+      signal_evaluator.py          ← signal evaluation engine for live execution
     observability/
       metrics.py
       tracing.py
@@ -471,6 +473,8 @@ quant-news-rag/
     test_paper_guard.py
     test_approval_gate.py
     test_market_hours.py
+    test_price_feed.py
+    test_signal_evaluator.py
 ```
 
 ---
@@ -491,6 +495,8 @@ All tests must pass with `pytest`. No external services — use mocks/fakes for 
 | `test_paper_guard` | Non-paper broker raises with PAPER_GUARD=true |
 | `test_approval_gate` | Agent proposals land in pending_approval, not active |
 | `test_market_hours` | paper_trade_tick no-ops outside market hours |
+| `test_price_feed` | MockPriceFeed returns preset prices; DbPriceFeed uses open price, skips stale data |
+| `test_signal_evaluator` | Sentiment threshold filtering, volatility gate, position reconciliation, order execution flow |
 
 ---
 

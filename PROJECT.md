@@ -179,6 +179,8 @@ quant-news-rag/
       alpaca_paper.py
       risk.py
       position_sizing.py
+      price_feed.py
+      signal_evaluator.py
     observability/
       metrics.py
       tracing.py
@@ -194,6 +196,8 @@ quant-news-rag/
     test_paper_guard.py
     test_approval_gate.py
     test_market_hours.py
+    test_price_feed.py
+    test_signal_evaluator.py
 ```
 
 ---
@@ -540,6 +544,21 @@ Checks per tick:
 - On startup, rehydrate: check today's `pnl_snapshot` for `halted=true` and refuse to trade if found.
 - **Never hold circuit breaker state only in memory.**
 
+### Price Feed (`core/execution/price_feed.py`)
+Abstraction for fetching current prices with three implementations:
+- **`AlpacaPriceFeed`** — calls Alpaca `StockHistoricalDataClient.get_stock_latest_bar()`. Uses `bar.open` (`# lookahead guard: shift(1)`). Skips tickers with data older than `RISK_MAX_DATA_STALENESS_MINUTES`.
+- **`DbPriceFeed`** — reads the most recent bar from Postgres via `market_data_repo.get_bars_for_ticker()`. Used when `BROKER_PROVIDER=internal`.
+- **`MockPriceFeed`** — returns preset prices dict. For tests.
+- **`get_price_feed(session=None)`** — factory: returns `AlpacaPriceFeed` when `BROKER_PROVIDER=alpaca`, else `DbPriceFeed(session)`.
+
+### Signal Evaluator (`core/execution/signal_evaluator.py`)
+Core engine that evaluates strategy signals and places orders:
+- **`evaluate_news_sentiment_signal(session, signal_config, universe)`** — queries `news_repo.get_recent()`, groups sentiment scores by ticker, returns `{ticker: avg_score}` for tickers above threshold.
+- **`evaluate_volatility_filter(session, signal_config)`** — reads latest VIXY bar as VIX proxy. Returns `True` (pass) or `False` (risk-off). Defaults to `True` if no VIXY data.
+- **`generate_signals_from_definition(session, definition, current_prices)`** — evaluates all signals: volatility filter as gate, then news sentiment. Returns `{ticker: "long"|"flat"}`.
+- **`reconcile_positions(signals, current_positions)`** — compares target vs held. Returns `(tickers_to_buy, tickers_to_sell)`.
+- **`execute_signals(broker, signals, current_prices, definition, circuit_breaker_tripped)`** — orchestrates orders: SELLs first, then BUYs with position sizing. Whole shares only. Checks exposure limits, trade rate, and circuit breaker.
+
 ### Market Hours
 `core/timeutils.py` must export: `is_market_open() -> bool`, `minutes_until_close() -> int`, `next_market_open() -> datetime`, `is_pre_market() -> bool`.
 `paper_trade_tick` must check `is_market_open()` first. If closed: log a debug message and return `{market_open: false, orders: [], positions: [], pnl_snapshot: null}`.
@@ -642,6 +661,8 @@ Use mocks/fakes for all external services. No real API calls in tests.
 | `test_paper_guard` | `assert_paper_guard()` raises when `TRADING_MODE != "paper"` and `PAPER_GUARD=true` |
 | `test_approval_gate` | Agent proposal creates `status=pending_approval`, not `active`; `approve()` sets `active` |
 | `test_market_hours` | `paper_trade_tick` returns `market_open=false` and empty orders outside NYSE hours |
+| `test_price_feed` | MockPriceFeed returns preset prices; DbPriceFeed uses `bar.open`, skips stale data, handles empty bars |
+| `test_signal_evaluator` | Sentiment threshold filtering, per-ticker grouping, volatility gate, position reconciliation, sell-before-buy order, circuit breaker skip, whole shares, trade rate limit |
 
 ---
 
