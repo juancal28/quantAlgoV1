@@ -13,6 +13,7 @@ from mcp.types import TextContent, Tool
 from apps.mcp_server.schemas import (
     EmbedInput,
     IngestInput,
+    PaperTradeTickInput,
     PnlSummaryInput,
     ProposeStrategyInput,
     QueryInput,
@@ -103,6 +104,11 @@ async def list_tools() -> list[Tool]:
             description="Run a backtest on a strategy definition over a date range",
             inputSchema=RunBacktestInput.model_json_schema(),
         ),
+        Tool(
+            name="paper_trade_tick",
+            description="Execute a single paper trading tick for an active strategy",
+            inputSchema=PaperTradeTickInput.model_json_schema(),
+        ),
     ]
 
 
@@ -154,6 +160,9 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
             result = await submit_strategy(session, SubmitStrategyInput(**arguments))
         elif name == "run_backtest":
             result = await run_backtest_tool(session, RunBacktestInput(**arguments))
+        elif name == "paper_trade_tick":
+            from apps.mcp_server.tools.execution import paper_trade_tick
+            result = await paper_trade_tick(session, PaperTradeTickInput(**arguments))
         else:
             return [TextContent(type="text", text=f"Unknown tool: {name}")]
 

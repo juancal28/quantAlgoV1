@@ -54,6 +54,29 @@ async def upsert_snapshot(session: AsyncSession, snapshot: PnlSnapshot) -> PnlSn
     return snapshot
 
 
+async def save_snapshot(session: AsyncSession, snapshot: PnlSnapshot) -> PnlSnapshot:
+    """Insert or update a PnL snapshot. Works on both SQLite and Postgres.
+
+    Checks for an existing snapshot and updates if found, inserts if not.
+    Use this instead of upsert_snapshot() when SQLite compatibility is needed.
+    """
+    existing = await get_snapshot(
+        session, snapshot.strategy_name, snapshot.snapshot_date
+    )
+    if existing is not None:
+        existing.realized_pnl = snapshot.realized_pnl
+        existing.unrealized_pnl = snapshot.unrealized_pnl
+        existing.gross_exposure = snapshot.gross_exposure
+        existing.peak_pnl = snapshot.peak_pnl
+        existing.positions = snapshot.positions
+        await session.flush()
+        return existing
+    else:
+        session.add(snapshot)
+        await session.flush()
+        return snapshot
+
+
 async def get_daily_snapshots(
     session: AsyncSession,
     strategy_name: str,

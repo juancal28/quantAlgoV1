@@ -193,6 +193,45 @@ class SubmitStrategyOutput(BaseModel):
 
 # --- run_backtest ---
 
+# --- paper_trade_tick ---
+
+class PaperTradeTickInput(BaseModel):
+    strategy_name: str = Field(description="Name of the active strategy to execute a tick for")
+
+
+class PaperTradeOrderItem(BaseModel):
+    order_id: str
+    ticker: str
+    side: str
+    quantity: float
+    price: float
+    status: str
+
+
+class PaperTradePositionItem(BaseModel):
+    ticker: str
+    quantity: float
+    avg_entry_price: float
+    market_value: float
+    unrealized_pnl: float
+
+
+class PaperTradePnlItem(BaseModel):
+    realized_pnl: float
+    unrealized_pnl: float
+    gross_exposure: float
+    peak_pnl: float
+
+
+class PaperTradeTickOutput(BaseModel):
+    orders: list[PaperTradeOrderItem]
+    positions: list[PaperTradePositionItem]
+    pnl_snapshot: PaperTradePnlItem | None = None
+    market_open: bool
+
+
+# --- run_backtest ---
+
 class RunBacktestInput(BaseModel):
     definition_json: dict[str, Any] = Field(description="Strategy definition to backtest")
     start: str = Field(description="Start date (YYYY-MM-DD)")
