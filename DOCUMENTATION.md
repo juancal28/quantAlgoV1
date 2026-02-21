@@ -21,10 +21,11 @@
 13. [Day-to-Day Usage](#13-day-to-day-usage)
 14. [Database Schema](#14-database-schema)
 15. [Project File Map](#15-project-file-map)
-16. [Remaining Build Phases](#16-remaining-build-phases)
-17. [Deployment Roadmap: Local → Railway](#17-deployment-roadmap-local--railway)
-18. [Monitoring with Claude Desktop (Dual MCP Servers)](#18-monitoring-with-claude-desktop-dual-mcp-servers)
-19. [Glossary](#19-glossary)
+16. [Build Phases — All Complete](#16-build-phases--all-complete)
+17. [Future Phases: Quantitative Model Development](#17-future-phases-quantitative-model-development)
+18. [Deployment Roadmap: Local → Railway](#18-deployment-roadmap-local--railway)
+19. [Monitoring with Claude Desktop (Dual MCP Servers)](#19-monitoring-with-claude-desktop-dual-mcp-servers)
+20. [Glossary](#20-glossary)
 
 ---
 
@@ -950,8 +951,7 @@ Log of every pipeline execution for observability.
 ```
 quantAlgoV1/
 │
-├── CLAUDE.md                          # Build spec (instructions for AI)
-├── PROJECT.md                         # Full project requirements
+├── CLAUDE.md                          # Build spec + constraints (merged)
 ├── DOCUMENTATION.md                   # This file
 ├── README.md                          # Project overview and quickstart
 ├── pyproject.toml                     # Dependencies and project config
@@ -1106,7 +1106,291 @@ All 12 build phases have been completed. The system is functionally complete and
 
 ---
 
-## 17. Deployment Roadmap: Local → Railway
+## 17. Future Phases: Quantitative Model Development
+
+The v1 system has solid engineering infrastructure but limited mathematical depth. The following phases add the quantitative rigor expected at professional quant firms. Each phase builds on the previous one — implement in order.
+
+### Phase 13: Alpha Research Framework & Factor Models
+
+**Goal:** Replace ad-hoc signal thresholds with a statistically rigorous factor evaluation pipeline.
+
+**New module:** `core/research/alpha.py`
+
+**What to build:**
+
+- **Information Coefficient (IC) / Rank IC**: For each signal, compute the Spearman rank correlation between the signal value at time *t* and the forward return at *t+1*. This is the industry-standard measure of signal quality. Track IC mean, IC standard deviation, and the **Information Ratio** (IC_mean / IC_std).
+- **Factor decay analysis**: Compute IC at horizons 1d, 2d, 5d, 10d, 20d to measure how quickly a signal's predictive power decays. Store decay curves per signal type.
+- **Cross-sectional momentum factor**: Replace the current rolling-return-on-open proxy with proper cross-sectional z-scores of returns across the universe. Go long the top decile, flat the bottom.
+- **Sentiment factor construction**: Z-score FinBERT sentiment across tickers at each point in time. Test IC against forward returns. This turns the existing raw sentiment scores into a proper tradeable factor.
+
+**Math involved:** Spearman's rho, z-score normalization, forward return calculation with proper lag alignment.
+
+**New files:**
+```
+core/research/
+  alpha.py              # IC/IR computation, factor decay
+  factors.py            # Cross-sectional momentum, sentiment factor
+tests/
+  test_alpha_research.py
+```
+
+**New dependencies:** None beyond existing numpy/scipy.
+
+**Why it matters for interviews:** Computing IC/IR is literally what quant researchers do daily. Being able to articulate "my sentiment signal has an IC of 0.03 with a half-life of 3 days" is the language firms speak.
+
+---
+
+### Phase 14: Statistical Validation & Backtest Integrity
+
+**Goal:** Move beyond "Sharpe > 0.5" to statistically defensible strategy validation.
+
+**New module:** `core/backtesting/statistical_tests.py`
+
+**What to build:**
+
+- **Sharpe ratio significance test**: Is the Sharpe ratio statistically different from zero? Compute `t = Sharpe * sqrt(N) / sqrt(1 + skew*Sharpe/2 + (kurt-3)*Sharpe²/4)` (the Lo (2002) adjusted Sharpe test). A Sharpe of 0.5 over 252 days has a t-stat of ~0.5, which is **not significant** — this is critical to understand.
+- **Multiple hypothesis correction**: When testing multiple strategy variants, apply Bonferroni or Benjamini-Hochberg FDR correction to p-values. This demonstrates understanding of data mining vs. genuine research.
+- **Walk-forward validation**: Replace the single 90-day OOS window with rolling walk-forward: train on [0, T], test on [T, T+k], slide forward by k days. Report the distribution of OOS Sharpe ratios, not just one number.
+- **Bootstrap confidence intervals**: Resample daily returns with replacement (block bootstrap to preserve autocorrelation), recompute Sharpe/drawdown 10,000 times, report 95% CI.
+
+**Enhanced metrics in `core/backtesting/metrics.py`:**
+- **Sortino Ratio**: Like Sharpe but only penalizes downside deviation. `(R - Rf) / σ_downside`
+- **Calmar Ratio**: `CAGR / MaxDrawdown`
+- **Profit Factor**: `sum(winning_trades) / abs(sum(losing_trades))`
+- **Tail Ratio**: `abs(95th percentile return / 5th percentile return)` — measures payoff asymmetry
+- **Skewness and Kurtosis** of the return distribution
+
+**Math involved:** t-statistics, FDR control, block bootstrap, combinatorial purged cross-validation.
+
+**New files:**
+```
+core/backtesting/
+  statistical_tests.py  # Significance tests, bootstrap, walk-forward
+tests/
+  test_statistical_tests.py
+```
+
+**New dependencies:** `statsmodels` (for statistical tests).
+
+**Why it matters for interviews:** Every quant desk knows backtests lie. Showing you understand why (overfitting, multiple comparisons, look-ahead) and how to mitigate it (walk-forward, bootstrap CIs, hypothesis correction) separates you from candidates who just report a Sharpe number.
+
+**Reference:** Andrew Lo, "The Statistics of Sharpe Ratios" (2002); Marcos López de Prado, *Advances in Financial Machine Learning* (2018).
+
+---
+
+### Phase 15: Portfolio Optimization
+
+**Goal:** Replace equal-weight position sizing with mathematically optimal portfolio construction.
+
+**New module:** `core/execution/portfolio_optimizer.py`
+
+**What to build:**
+
+- **Mean-Variance Optimization (Markowitz)**: Given expected returns (from signal scores) and a covariance matrix, solve for weights that maximize the Sharpe ratio. Use `scipy.optimize.minimize` with constraints (long-only, max position size from `RISK_MAX_POSITION_PCT`).
+- **Minimum Variance Portfolio**: Useful when you trust your covariance estimate more than your return estimate (you almost always should). Minimize `w'Σw` subject to `sum(w) = 1`, `w >= 0`.
+- **Risk Parity**: Allocate such that each position contributes equally to portfolio variance. Compute marginal risk contributions: `w_i * (Σw)_i / sqrt(w'Σw)`. Solve iteratively.
+- **Black-Litterman**: Combine market-cap-implied equilibrium returns with your sentiment views. This is the theoretically correct framework for this system — you have views from news analysis and want to tilt away from market-cap weights.
+- **Ledoit-Wolf shrinkage**: Use shrunk covariance estimation instead of sample covariance for stability with small sample sizes relative to the number of assets.
+
+**Integration point:** Replace `compute_order_quantity()` in `core/execution/position_sizing.py` with optimizer output. The strategy definition's `position_sizing.type` field gains new valid values: `"mean_variance"`, `"min_variance"`, `"risk_parity"`, `"black_litterman"` (in addition to existing `"equal_weight"`).
+
+**Math involved:** Quadratic programming, Lagrange multipliers, matrix operations, covariance estimation, shrinkage estimators.
+
+**New files:**
+```
+core/execution/
+  portfolio_optimizer.py   # MVO, min-var, risk parity, Black-Litterman
+  covariance.py            # Ledoit-Wolf, sample cov, exponentially-weighted
+tests/
+  test_portfolio_optimizer.py
+```
+
+**New dependencies:** `cvxpy` (convex optimization — cleaner than scipy for constrained QP).
+
+**Why it matters for interviews:** Mean-variance optimization is a classic interview topic at every quant firm. Being able to implement it from scratch (not just call a library) and discuss its limitations (estimation error, sensitivity to inputs) is expected.
+
+---
+
+### Phase 16: Time-Varying Volatility & Vol Targeting
+
+**Goal:** Replace flat rolling-window volatility with proper time-series volatility models.
+
+**New module:** `core/research/timeseries.py`
+
+**What to build:**
+
+- **GARCH(1,1) volatility model**: Fit `σ²_t = ω + α·ε²_{t-1} + β·σ²_{t-1}` via maximum likelihood to get time-varying volatility estimates. Use for:
+  - Volatility-targeted position sizing: scale position sizes inversely with predicted vol to maintain constant portfolio risk.
+  - Improved VIX replacement: instead of using VIXY as a VIX proxy, compute realized + predicted vol directly from the price series.
+- **Exponentially Weighted Moving Average (EWMA) volatility**: Faster alternative to GARCH. `σ²_t = λ·σ²_{t-1} + (1-λ)·r²_{t-1}` with λ ≈ 0.94 (RiskMetrics standard).
+- **Volatility regime classification**: Simple threshold-based (low/medium/high vol regimes) using GARCH output. Condition strategy behavior on regime — e.g., tighter position limits in high-vol regimes.
+- **Stationarity testing**: ADF (Augmented Dickey-Fuller) test on every signal before using it. Non-stationary signals produce spurious backtest results. Auto-difference if needed.
+
+**Integration point:** Add `"volatility_target"` as a new `position_sizing.type` in the strategy definition. When active, the optimizer scales weights by `target_vol / predicted_vol` each day.
+
+**Math involved:** MLE for GARCH parameters, EWMA recursion, ADF/Phillips-Perron tests, regime classification.
+
+**New files:**
+```
+core/research/
+  timeseries.py          # GARCH, EWMA, stationarity tests
+  volatility.py          # Vol targeting, regime detection
+tests/
+  test_timeseries.py
+```
+
+**New dependencies:** `arch` (GARCH models — better than statsmodels for this specific task).
+
+**Why it matters for interviews:** Understanding that volatility clusters and modeling it properly (not just using a flat 20-day rolling window) shows time-series sophistication that most candidates lack.
+
+---
+
+### Phase 17: Risk Analytics & VaR/CVaR
+
+**Goal:** Replace simple threshold-based risk checks with distributional risk modeling.
+
+**New module:** `core/backtesting/risk_analytics.py`
+
+**What to build:**
+
+- **Value at Risk (VaR)** — three methods:
+  - *Parametric*: Assume normal distribution, compute `VaR = μ - z_α · σ` where z_α is the normal quantile (e.g., 1.645 for 95% VaR).
+  - *Historical*: Sort historical returns, take the 5th percentile (for 95% VaR). No distributional assumptions.
+  - *Monte Carlo*: Simulate 10,000 return paths from a fitted distribution (e.g., GARCH-predicted vol + Student-t innovations), compute VaR from simulated distribution.
+- **Conditional VaR (CVaR / Expected Shortfall)**: The mean of returns below the VaR threshold. More useful than VaR because it captures tail shape. Required by Basel III for bank risk reporting.
+- **Drawdown distribution**: Compute max drawdown under Monte Carlo simulated paths to get a confidence interval (e.g., "95% CI for max drawdown is [8%, 22%]"), not just the single historical max.
+- **Stress testing**: Define scenario shocks (e.g., "SPY drops 10% in one day", "correlation spike to 0.9") and compute portfolio impact under each scenario.
+
+**Integration point:**
+- Add VaR/CVaR to backtest output metrics alongside Sharpe/drawdown.
+- Add VaR-based position limits: if portfolio 1-day 95% VaR exceeds a configurable threshold, reduce position sizes.
+- Circuit breaker gains a VaR-based early warning: log a warning when estimated 1-day VaR exceeds 1.5x the daily loss limit.
+
+**Math involved:** Quantile functions, conditional expectations, Monte Carlo simulation, copula-based stress testing.
+
+**New files:**
+```
+core/backtesting/
+  risk_analytics.py     # VaR, CVaR, drawdown distribution, stress tests
+tests/
+  test_risk_analytics.py
+```
+
+**New dependencies:** None beyond existing numpy/scipy.
+
+**Why it matters for interviews:** Every risk desk uses VaR/CVaR. Understanding the differences between parametric, historical, and Monte Carlo VaR — and being able to explain why CVaR is superior — is table stakes.
+
+---
+
+### Phase 18: Regime Detection (Hidden Markov Models)
+
+**Goal:** Detect bull/bear market regimes and condition strategy behavior on the current regime.
+
+**New module:** `core/research/regime.py`
+
+**What to build:**
+
+- **2-state Hidden Markov Model (HMM)**: Fit a Gaussian HMM to daily returns with two hidden states (bull regime: positive mean + low vol; bear regime: negative mean + high vol). Use the Baum-Welch algorithm (EM) for parameter estimation and Viterbi algorithm for state decoding.
+- **Regime-conditioned strategy execution**: Only trade momentum signals in the bull regime. Switch to risk-off (flat or defensive positions) in the bear regime. The regime state becomes a new signal type (`"type": "regime_filter"`) in the strategy definition.
+- **Online regime detection**: After initial training on historical data, update regime probabilities in real-time as new bars arrive using the forward algorithm. No need to retrain the full model each tick.
+- **Regime transition probabilities**: Expose the estimated transition matrix so the agent can reason about regime persistence (e.g., "the model estimates a 95% probability of staying in the current bull regime tomorrow").
+
+**Integration point:** Add `"regime_filter"` as a new signal type in the strategy language. When present, the signal evaluator queries the regime model before evaluating other signals.
+
+**Math involved:** EM algorithm, Viterbi decoding, forward-backward algorithm, Gaussian mixture emissions.
+
+**New files:**
+```
+core/research/
+  regime.py              # HMM training, online updates, regime classification
+tests/
+  test_regime.py
+```
+
+**New dependencies:** `hmmlearn` (Hidden Markov Models).
+
+**Why it matters for interviews:** This is a differentiator. Most candidates can talk about momentum and mean-reversion. Few can implement a regime-switching model and explain why a momentum strategy fails in bear markets. Shows ML applied correctly to finance (not just "I threw a neural net at stock prices").
+
+---
+
+### Phase 19: Pairs Trading & Statistical Arbitrage
+
+**Goal:** Add market-neutral strategies based on cointegration and mean-reversion of price spreads.
+
+**New module:** `core/research/pairs.py`, `core/strategies/implementations/pairs_trading.py`
+
+**What to build:**
+
+- **Cointegration testing**: Implement Engle-Granger two-step procedure and Johansen trace test to identify cointegrated pairs within the approved universe. A cointegrated pair means their price spread is mean-reverting even if individual prices are random walks.
+- **Spread construction**: For each cointegrated pair, estimate the hedge ratio via OLS regression (`price_A = β·price_B + ε`). The spread is `price_A - β·price_B`. Compute the z-score of the spread.
+- **Ornstein-Uhlenbeck half-life**: Fit the O-U process `dX_t = θ(μ - X_t)dt + σdW_t` to the spread via OLS on `ΔX = a + bX_{t-1}`. Half-life = `-ln(2)/b`. Short half-lives (< 20 days) suggest profitable mean-reversion.
+- **Pairs trading signals**: Enter when spread z-score exceeds ±2σ, exit when it reverts to ±0.5σ or after a time stop. This is a market-neutral strategy — long one leg, short the other — so it has low correlation with broad market moves.
+- **Rolling cointegration check**: Re-test cointegration every N days. If a pair loses cointegration, close the position and remove the pair.
+
+**Integration point:** Add `"pairs_mean_reversion"` as a new signal type. The strategy definition gains a `"pairs"` field listing ticker pairs and their parameters. The backtester and signal evaluator both need to handle paired positions (long + short simultaneously).
+
+**Important caveat:** This requires expanding the broker interface to support short selling (at least in paper mode). The current `PaperBroker` only handles long positions. Add a `short_sell()` method alongside the existing `submit_order()`.
+
+**Math involved:** Engle-Granger procedure, Johansen test, OLS regression, O-U process MLE, z-score signals.
+
+**New files:**
+```
+core/research/
+  pairs.py               # Cointegration tests, spread construction, O-U half-life
+core/strategies/implementations/
+  pairs_trading.py       # Pairs trading strategy
+tests/
+  test_pairs.py
+```
+
+**New dependencies:** `statsmodels` (already needed from Phase 14 for cointegration tests).
+
+**Why it matters for interviews:** Pairs trading is the canonical statistical arbitrage strategy. Being able to explain cointegration vs. correlation, derive the hedge ratio, and compute the O-U half-life demonstrates deep understanding of the math behind stat-arb desks.
+
+---
+
+### Implementation Priority & Dependency Graph
+
+```
+Phase 13 (Alpha/IC)
+  ↓
+Phase 14 (Statistical Tests) ← depends on Phase 13 for factor metrics
+  ↓
+Phase 15 (Portfolio Optimization) ← depends on Phase 14 for validation
+  ↓
+Phase 16 (GARCH/Vol) ← depends on Phase 15 for vol-targeted sizing
+  ↓
+Phase 17 (VaR/CVaR) ← depends on Phase 16 for vol model inputs
+  ↓
+Phase 18 (Regime HMM) ← depends on Phase 16 for vol regime classification
+  ↓
+Phase 19 (Pairs Trading) ← independent, but benefits from Phases 14-16
+```
+
+### New Dependencies Summary
+
+| Package | Phase | Purpose |
+|---|---|---|
+| `statsmodels` | 14, 19 | ADF test, OLS, cointegration, statistical tests |
+| `cvxpy` | 15 | Convex optimization for portfolio construction |
+| `arch` | 16 | GARCH models |
+| `hmmlearn` | 18 | Hidden Markov Models |
+
+### Suggested `pyproject.toml` Addition
+
+```toml
+[project.optional-dependencies]
+quant = [
+    "statsmodels>=0.14",
+    "cvxpy>=1.4",
+    "arch>=6.0",
+    "hmmlearn>=0.3",
+]
+```
+
+---
+
+## 18. Deployment Roadmap: Local → Railway
 
 The project follows a two-stage deployment strategy.
 
@@ -1305,7 +1589,7 @@ Each strategy pod gets its own environment overrides. The same codebase is deplo
 
 ---
 
-## 18. Monitoring with Claude Desktop (Dual MCP Servers)
+## 19. Monitoring with Claude Desktop (Dual MCP Servers)
 
 This system can be monitored conversationally using Claude Desktop with two MCP servers running side by side:
 
@@ -1386,7 +1670,7 @@ The Alpaca server's trading tools bypass our safety rails (PAPER_GUARD, strategy
 
 ---
 
-## 19. Glossary
+## 20. Glossary
 
 | Term | Definition |
 |---|---|
