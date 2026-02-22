@@ -1,275 +1,131 @@
 # Quant News-RAG Trading System
 
-A modular, **paper-only** quantitative trading system that ingests financial news, builds a vector knowledge base (RAG), uses an LLM agent to propose strategy updates, backtests them with dual-window validation, and executes paper trades — all with a mandatory human approval gate.
+**A personal project to learn quantitative trading by building a complete, working system from scratch.**
 
-## How It Works
+I built this project to develop a deep understanding of the systems, mathematics, and engineering behind quantitative trading — with the goal of pursuing an internship in the field. Rather than just reading about how quant systems work, I wanted to build one end-to-end: from data ingestion to strategy evaluation to simulated execution.
 
-```
-Fetch news (RSS) → Dedupe & store → Embed into Qdrant → Score sentiment
-  → RAG agent proposes strategy update → Validator checks rules
-  → Backtest (in-sample + out-of-sample) → Submit for human approval
-  → Human approves via API → Signal engine evaluates → Paper broker executes
-  → PnL tracked in DB → Circuit breaker monitors losses
-```
+The system is paper-only (no real money) and is designed as a learning tool that demonstrates practical knowledge of the full quant trading stack.
 
-The full pipeline runs on a Celery schedule every 2 minutes (configurable). Paper trading ticks run every 60 seconds during market hours.
+---
 
-### Signal Evaluation (paper_trade_tick)
+## What It Does
 
-Once a strategy is approved and active, each paper trading tick follows this flow:
+This is an autonomous trading system that reads financial news, decides whether to adjust its trading strategy, validates that decision through backtesting, and then paper-trades with simulated money. The key ideas:
 
-1. **Check market hours** — no-op if NYSE is closed
-2. **Load active strategy** definition from Postgres
-3. **Fetch current prices** — via Alpaca Data API (`BROKER_PROVIDER=alpaca`) or from DB bars (`BROKER_PROVIDER=internal`). Prices use bar `open` to prevent lookahead bias. Stale data (older than `RISK_MAX_DATA_STALENESS_MINUTES`) is skipped.
-4. **Evaluate signals** (throttled by `rebalance_minutes` from strategy definition):
-   - **Volatility filter** (gate) — reads VIXY ETF price as VIX proxy. If above `max_vix`, all signals go flat (risk-off). Defaults to pass if no VIXY data.
-   - **News sentiment** — queries recent news from DB, groups sentiment scores by ticker, computes per-ticker average. Tickers above `threshold` get a "long" signal.
-5. **Reconcile positions** — compares target signals vs currently held positions to determine buys and sells
-6. **Execute orders** through the broker:
-   - Checks circuit breaker, exposure limits, and trade rate limits
-   - Sells first (to free up cash), then buys
-   - Position sizing via equal-weight with `RISK_MAX_POSITION_PCT` cap
-   - Whole shares only (fractional quantities are floored)
-7. **Persist PnL snapshot** to Postgres and check circuit breaker
+1. **News as a signal source** — The system continuously ingests financial news from RSS feeds, stores it in a searchable vector database, and scores each article's sentiment using a finance-tuned language model (FinBERT). This creates a structured, queryable representation of market-moving information.
 
-## Prerequisites
+2. **AI-assisted strategy proposals** — A RAG (Retrieval-Augmented Generation) agent reads recent news and proposes minimal adjustments to the current trading strategy. Every proposal must cite specific articles — no unsupported claims. This demonstrates how LLMs can be used as analytical tools with proper guardrails, not as autonomous decision-makers.
 
-- **Python 3.11+**
-- **Docker & Docker Compose** (for Postgres, Qdrant, Redis, Flower)
-- **Alpaca API keys** (free paper trading account at [alpaca.markets](https://alpaca.markets)) — required for market data
-- **OpenAI API key** (optional) — only if using `EMBEDDINGS_PROVIDER=openai`; the default `mock` provider requires no key
+3. **Rigorous validation before execution** — No strategy goes live without passing through a validator (checking risk limits, approved tickers, and change scope) and a dual-window backtester (1-year in-sample + 90-day out-of-sample). The backtester applies realistic trading costs and prevents lookahead bias.
 
-## Setup
+4. **Human-in-the-loop** — The AI never auto-activates a strategy. Every proposal lands in a "pending approval" state and requires explicit human sign-off. This is a deliberate design choice that reflects how real trading desks operate.
 
-### 1. Clone and configure
+5. **Paper trading with full risk management** — Approved strategies trade with $100,000 of simulated money. The system enforces position limits, exposure caps, trade rate limits, and a daily loss circuit breaker that halts everything if losses exceed 2%.
 
-```bash
-git clone https://github.com/juancal28/quantAlgoV1.git
-cd quantAlgoV1
-cp .env.example .env
-```
+---
 
-Edit `.env` to fill in your API keys:
+## What I Learned Building This
+
+### Quantitative Concepts
+- **Backtesting integrity** — why lookahead bias is the most common and dangerous mistake in strategy development, and how to prevent it with explicit data shifting
+- **Dual-window validation** — why in-sample performance alone is meaningless, and how out-of-sample testing helps detect overfitting
+- **Risk management** — position sizing, gross exposure limits, circuit breakers, and why these matter more than the strategy itself
+- **Trading cost modeling** — how commissions, slippage, and bid-ask spreads erode returns, and why a backtest without cost modeling is fiction
+- **Signal construction** — turning raw data (news sentiment, price momentum) into tradeable signals with defined thresholds and lookback windows
+
+### Software Engineering
+- **Event-driven architecture** — Celery task queues with Redis for reliable, retryable pipeline execution
+- **Async Python** — FastAPI with SQLAlchemy 2.x async for non-blocking I/O throughout
+- **Vector databases** — Qdrant for semantic search over document embeddings, enabling the RAG agent to find relevant news
+- **Database design** — 6-table Postgres schema with audit trails, versioned strategies, and persistent circuit breaker state
+- **Clean architecture** — strict separation between business logic (`core/`) and application layers (`apps/`), with one-directional dependencies
+
+### AI/ML Integration
+- **RAG pipelines** — document chunking, embedding, vector search, and context-augmented generation
+- **Sentiment analysis** — using FinBERT (a finance-tuned transformer) for domain-specific NLP
+- **LLM guardrails** — constraining AI output through structured schemas, citation requirements, and mandatory validation gates
+
+---
+
+## System at a Glance
 
 ```
-ALPACA_API_KEY=your_key_here
-ALPACA_API_SECRET=your_secret_here
+News (RSS) -> Store & Deduplicate -> Embed into Vector DB -> Score Sentiment
+  -> RAG Agent proposes strategy update -> Validator checks rules
+  -> Backtest (in-sample + out-of-sample) -> Submit for human approval
+  -> Human approves -> Signal engine evaluates -> Paper broker executes
+  -> PnL tracked -> Circuit breaker monitors losses
 ```
 
-### 2. Start infrastructure services
+The full pipeline runs automatically every 2 minutes. Paper trading ticks run every 60 seconds during NYSE market hours.
 
-```bash
-docker-compose up -d
-```
+---
 
-This starts:
-| Service | Port | Purpose |
-|---------|------|---------|
-| Postgres | 5432 | Primary database |
-| Qdrant | 6333 | Vector database for news embeddings |
-| Redis | 6379 | Celery task broker |
-| Flower | 5555 | Celery task monitoring dashboard |
+## Tech Stack
 
-### 3. Install Python dependencies
+| Component | Technology |
+|-----------|------------|
+| Language | Python 3.11+ (async throughout) |
+| API | FastAPI |
+| Task Queue | Celery + Redis |
+| Database | PostgreSQL 16 |
+| Vector DB | Qdrant |
+| Sentiment | FinBERT |
+| Market Data | Alpaca API / yfinance |
+| LLM | Anthropic Claude (via RAG agent) |
+| Broker | Paper-only (internal or Alpaca paper) |
 
-```bash
-python -m venv .venv
-source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-pip install -e ".[dev]"
-```
+---
 
-For sentiment analysis with FinBERT and backtesting with vectorbt:
+## Safety by Design
 
-```bash
-pip install -e ".[sentiment,backtest]"
-```
+This system is **paper-only** — there is no live trading code. Multiple safety layers ensure this:
 
-### 4. Run database migrations
+- The process hard-exits on startup if `TRADING_MODE` is set to anything other than `paper`
+- Every broker method checks a `PAPER_GUARD` flag before placing any order
+- The AI agent can never auto-activate a strategy — human approval is always required
+- A daily loss circuit breaker (persisted in the database, not memory) halts all trading if losses exceed 2%
 
-```bash
-alembic upgrade head
-```
+---
 
-### 5. Start the application
-
-**API server:**
-
-```bash
-uvicorn apps.api.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-**Celery worker** (in a separate terminal):
-
-```bash
-celery -A apps.scheduler.worker worker --loglevel=info
-```
-
-**Celery beat scheduler** (in a separate terminal):
-
-```bash
-celery -A apps.scheduler.worker beat --loglevel=info
-```
-
-## Usage
-
-### Run a news cycle manually
-
-Trigger a full pipeline run (ingest → embed → sentiment → agent → validate → backtest → submit):
-
-```bash
-curl -X POST http://localhost:8000/runs/news_cycle
-```
-
-### View recent news
-
-```bash
-curl http://localhost:8000/news/recent?minutes=120
-```
-
-### View strategies
-
-```bash
-# List all strategies
-curl http://localhost:8000/strategies
-
-# Get the active version of a strategy
-curl http://localhost:8000/strategies/sentiment_momentum_v1/active
-
-# Get all versions of a strategy
-curl http://localhost:8000/strategies/sentiment_momentum_v1/versions
-```
-
-### Approve a pending strategy
-
-Strategy proposals from the RAG agent **never auto-activate**. They land in `pending_approval` status and require explicit human approval:
-
-```bash
-curl -X POST http://localhost:8000/strategies/{name}/approve/{version_id}
-```
-
-### Run a backtest
-
-```bash
-curl -X POST http://localhost:8000/strategies/{name}/backtest
-```
-
-### View PnL
-
-```bash
-curl http://localhost:8000/pnl/daily?strategy=sentiment_momentum_v1
-```
-
-### View pipeline run history
-
-```bash
-curl http://localhost:8000/runs/recent
-```
-
-### Monitor Celery tasks
-
-Open [http://localhost:5555](http://localhost:5555) in your browser for the Flower dashboard.
-
-## Architecture
+## Project Structure
 
 ```
-apps/            → Thin application layers (no business logic)
-  api/           → FastAPI REST endpoints
-  mcp_server/    → MCP tool server
-  scheduler/     → Celery worker and periodic jobs
-core/            → All business logic (independently importable)
-  ingestion/     → News fetching, dedup, normalization, ticker extraction
-  storage/       → SQLAlchemy models, DB session, repository layer
-  kb/            → Embeddings, chunking, vector store, sentiment scoring
-  agent/         → RAG agent, strategy language, validator, approval gate
-  backtesting/   → Backtest engine, cost model, metrics
-  execution/     → Paper broker, signal evaluator, price feed, risk, position sizing
-  strategies/    → Strategy base class, registry, built-in implementations
+core/           All business logic (independently importable)
+  ingestion/    News fetching, dedup, normalization, ticker extraction
+  kb/           Embeddings, chunking, vector store, sentiment scoring
+  agent/        RAG agent, strategy language, validator, approval gate
+  backtesting/  Backtest engine, cost model, metrics
+  execution/    Paper broker, signal evaluator, risk management
+  strategies/   Strategy definitions and registry
+  storage/      Database models and repository layer
+
+apps/           Thin application wrappers (no business logic)
+  api/          FastAPI REST endpoints
+  mcp_server/   MCP tool server for AI agent access
+  scheduler/    Celery worker and periodic jobs
+
+tests/          174 tests across 22 files (all run with mocks)
 ```
 
-**Dependency rule:** `apps/*` calls `core/*`, never the reverse.
+---
 
-## Safety Rails
+## Future Work
 
-This system enforces multiple layers of safety:
+The v1 system has solid engineering infrastructure. Planned future phases add quantitative depth:
 
-- **Paper-only mode**: `TRADING_MODE=paper` is the only valid value. The process hard-exits on startup if any other value is detected. No live trading codepath exists.
-- **Paper guard**: Every broker method checks `PAPER_GUARD=true` before placing orders. Non-paper brokers raise `RuntimeError` immediately.
-- **Human approval gate**: RAG agent proposals always land in `pending_approval` status. Activation requires an explicit API call.
-- **Daily loss circuit breaker**: Persisted in Postgres (not memory). Halts all trading if daily loss exceeds the configured threshold (default 2%). Rehydrates on restart.
-- **Risk checks on every tick**: Exposure limits, per-position caps, trade rate limits, and data staleness checks are all enforced before any order is placed.
-- **Strategy validator**: Rejects proposals with unapproved tickers, risk limit violations, unknown signal types, or too many changed fields.
-- **Dual-window backtesting**: Both in-sample (252 days) and out-of-sample (90 days) must pass Sharpe, drawdown, and win rate thresholds before a proposal can be submitted.
+- **Alpha research framework** — Information Coefficient (IC) computation, factor decay analysis
+- **Statistical validation** — Sharpe ratio significance testing, walk-forward validation, bootstrap confidence intervals
+- **Portfolio optimization** — Mean-variance, risk parity, Black-Litterman
+- **Volatility modeling** — GARCH, EWMA, vol-targeted position sizing
+- **Risk analytics** — VaR/CVaR, Monte Carlo drawdown distributions, stress testing
+- **Regime detection** — Hidden Markov Models for bull/bear market classification
+- **Pairs trading** — Cointegration-based statistical arbitrage
 
-## Configuration
+See [DOCUMENTATION.md](DOCUMENTATION.md) for full technical details, setup instructions, and configuration reference.
 
-All configuration is managed via environment variables loaded through `pydantic-settings`. See [`.env.example`](.env.example) for the full list with defaults.
-
-Key settings:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TRADING_MODE` | `paper` | **Must be `paper`**. Hard exit otherwise. |
-| `PAPER_GUARD` | `true` | Blocks any non-paper order execution |
-| `PAPER_INITIAL_CASH` | `100000` | Starting paper portfolio value |
-| `RISK_MAX_DAILY_LOSS_PCT` | `0.02` | Circuit breaker threshold (2%) |
-| `RISK_MAX_POSITION_PCT` | `0.10` | Max single position size (10%) |
-| `BROKER_PROVIDER` | `internal` | `internal` or `alpaca` (paper broker + price feed backend) |
-| `RISK_MAX_DATA_STALENESS_MINUTES` | `30` | Skip price data older than this (minutes) |
-| `ANTHROPIC_API_KEY` | *(empty)* | Required for RAG agent LLM calls |
-| `EMBEDDINGS_PROVIDER` | `mock` | `mock` or `openai` |
-| `SENTIMENT_PROVIDER` | `finbert` | `finbert`, `llm`, or `mock` |
-| `STRATEGY_APPROVED_UNIVERSE` | `SPY,QQQ,...` | Allowed tickers for strategies |
-| `NEWS_POLL_INTERVAL_SECONDS` | `120` | Pipeline run frequency |
-
-## Running Tests
-
-174 tests across 22 test files. All tests run with mocks — no external services required:
-
-```bash
-pytest
-```
-
-With coverage:
-
-```bash
-pytest --cov=core --cov=apps
-```
-
-## MCP Server
-
-The system exposes an MCP (Model Context Protocol) tool server for programmatic access:
-
-| Tool | Description |
-|------|-------------|
-| `ingest_latest_news` | Fetch and store recent news articles |
-| `embed_and_upsert_docs` | Embed documents and upsert to vector DB |
-| `score_sentiment` | Run sentiment analysis on documents |
-| `query_kb` | Search the knowledge base |
-| `propose_strategy_update` | Have the RAG agent propose a strategy change |
-| `validate_strategy` | Validate a strategy definition |
-| `run_backtest` | Backtest a strategy definition |
-| `submit_strategy_for_approval` | Submit a validated strategy for human approval |
-| `paper_trade_tick` | Execute one paper trading tick |
-| `get_system_health` | Read-only: system health, trading mode, market status |
-| `get_strategy_overview` | Read-only: all strategies with status and metrics |
-| `get_recent_runs` | Read-only: recent pipeline run history |
-| `get_pnl_summary` | Read-only: daily PnL snapshots for a strategy |
-| `get_recent_news_summary` | Read-only: recent news with sentiment scores |
-
-## Known Limitations (v1)
-
-- Survivorship bias is not corrected in the backtester (ETF-only universe is a partial mitigation).
-- Near-duplicate detection (SimHash) is not implemented; only exact content hash dedup is used.
-- Market data uses daily bars by default; intraday signals may not be fully representable.
-- The RAG agent's confidence scores are self-reported and not calibrated.
-- No portfolio-level risk management across multiple simultaneous strategies.
-- VIX proxy uses VIXY ETF price (real VIX index not available via Alpaca data API). Degrades gracefully (defaults to pass) if no data.
-- No fractional share support; order quantities are floored to whole shares.
+---
 
 ## Disclaimer
 
-**This system is for paper trading and educational purposes only. No live trading is implemented or supported.**
-
-- News-based signals have no guaranteed alpha. Past backtest performance does not predict future results.
-- The RAG agent can make incorrect inferences. All strategy proposals require human review before activation.
-- This software is provided as-is with no warranty. Use at your own risk.
+This system is for paper trading and educational purposes only. No live trading is implemented or supported. News-based signals have no guaranteed alpha. Past backtest performance does not predict future results.
