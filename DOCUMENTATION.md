@@ -312,6 +312,33 @@ All configuration is managed through environment variables loaded from a `.env` 
 | `STRATEGY_MIN_BACKTEST_DAYS` | `252` | Minimum backtest window (252 trading days ~ 1 year) |
 | `PENDING_APPROVAL_AUTO_APPROVE_MINUTES` | `0` | 0 = never auto-approve; N = auto-approve after N minutes |
 
+### Multi-Agent
+
+The system supports running N independent RAG agents in a single process, each focused on a different market segment. Configured via a single JSON environment variable. When `AGENT_CONFIGS` is empty (`[]`), the system falls back to single-agent behavior.
+
+| Variable | Default | Description |
+|---|---|---|
+| `AGENT_CONFIGS` | `[]` | JSON array of agent configs. Each agent gets its own RSS feeds, Qdrant collection, and strategy name. |
+
+Each agent config object has:
+
+| Field | Description |
+|---|---|
+| `name` | Unique agent identifier (e.g., `"tech"`, `"energy"`) |
+| `feed_urls` | List of RSS feed URLs specific to this agent's market segment |
+| `collection_name` | Qdrant collection name for this agent's embeddings |
+| `strategy_name` | Strategy name this agent proposes updates for |
+
+Example:
+```json
+AGENT_CONFIGS='[
+  {"name": "tech", "feed_urls": ["https://..."], "collection_name": "news_tech", "strategy_name": "tech_momentum_v1"},
+  {"name": "energy", "feed_urls": ["https://..."], "collection_name": "news_energy", "strategy_name": "energy_sentiment_v1"}
+]'
+```
+
+Shared across agents: Postgres `news_documents` table (deduplicated), Redis task queue, sentiment scoring. Each agent registers its own Celery beat schedule entry (`news-cycle-{agent.name}`).
+
 ### Broker
 
 | Variable | Default | Description |
@@ -1075,7 +1102,7 @@ quantAlgoV1/
 |       |-- worker.py                 # Celery worker config + beat schedule
 |       +-- jobs.py                   # Scheduled pipeline jobs
 |
-+-- tests/                            # 174 tests across 22 test files
++-- tests/                            # 191 tests across 23 test files
     |-- conftest.py                   # Fixtures (SQLite, mock config)
     |-- test_smoke.py                 # Import + config smoke tests
     |-- test_dedupe.py                # Deduplication logic
@@ -1105,7 +1132,7 @@ quantAlgoV1/
 
 ## 16. Running Tests
 
-174 tests across 22 test files. All tests run with mocks — no external services required:
+191 tests across 23 test files. All tests run with mocks — no external services required:
 
 ```bash
 pytest
@@ -1359,7 +1386,7 @@ Migrate to [Railway](https://railway.app) for always-on operation during market 
 
 ### Stage 3: Kubernetes Orchestration (Future)
 
-Separate Docker containers per market sector, coordinated by Kubernetes for portfolio-level decisions.
+Separate Docker containers per market sector, coordinated by Kubernetes for portfolio-level decisions. The **multi-agent architecture** (`AGENT_CONFIGS`) already supports this at the code level — set one agent per pod with the same codebase, differentiated only by environment variables. What remains is the K8s infrastructure (Helm charts, manifests, portfolio coordinator service).
 
 ```
 +-----------------------------------------------------------+

@@ -105,7 +105,7 @@ apps/           Thin application wrappers (no business logic)
   mcp_server/   MCP tool server for AI agent access
   scheduler/    Celery worker and periodic jobs
 
-tests/          174 tests across 22 files (all run with mocks)
+tests/          191 tests across 23 files (all run with mocks)
 ```
 
 ---
