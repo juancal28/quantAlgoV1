@@ -1,6 +1,8 @@
-"""Position sizing logic."""
+"""Position sizing logic — delegating to C++."""
 
 from __future__ import annotations
+
+from _quant_core import cpp_compute_order_quantity
 
 
 def compute_order_quantity(
@@ -28,17 +30,6 @@ def compute_order_quantity(
             max_pos_pct,
         )
 
-    # Equal-weight target
-    target_value = portfolio_value / num_target_positions
-
-    # Cap at max position percentage
-    max_value = portfolio_value * max_pos_pct
-    target_value = min(target_value, max_value)
-
-    # Cap at available cash
-    target_value = min(target_value, cash_available)
-
-    if target_value <= 0:
-        return 0.0
-
-    return target_value / price
+    return cpp_compute_order_quantity(
+        price, portfolio_value, cash_available, num_target_positions, max_pos_pct,
+    )

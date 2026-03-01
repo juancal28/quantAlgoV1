@@ -2,6 +2,10 @@
 
 Evaluates strategy signals from the definition JSON using real DB data,
 then orchestrates order placement through the broker.
+
+Async signal evaluation stays in Python (DB-bound).
+Synchronous reconciliation and order orchestration delegate to C++ when
+using the PaperBroker.
 """
 
 from __future__ import annotations
@@ -9,6 +13,8 @@ from __future__ import annotations
 import math
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from _quant_core import cpp_reconcile_positions, cpp_execute_signals
 
 from core.execution.broker_base import BrokerBase, Order
 from core.execution.position_sizing import compute_order_quantity
@@ -132,27 +138,14 @@ def reconcile_positions(
     signals: dict[str, str],
     current_positions: dict[str, float],
 ) -> tuple[list[str], list[str]]:
-    """Compare target signals vs held positions.
+    """Compare target signals vs held positions — delegates to C++.
 
     Returns (tickers_to_buy, tickers_to_sell).
     - tickers_to_buy: tickers with "long" signal not currently held
     - tickers_to_sell: tickers currently held but signal is "flat" or not in signals
     """
-    tickers_to_buy: list[str] = []
-    tickers_to_sell: list[str] = []
-
-    # Tickers we want long but don't hold
-    for ticker, direction in signals.items():
-        if direction == "long" and ticker not in current_positions:
-            tickers_to_buy.append(ticker)
-
-    # Tickers we hold but should be flat
-    for ticker in current_positions:
-        sig = signals.get(ticker, "flat")
-        if sig != "long":
-            tickers_to_sell.append(ticker)
-
-    return tickers_to_buy, tickers_to_sell
+    result = cpp_reconcile_positions(signals, current_positions)
+    return result.to_buy, result.to_sell
 
 
 def execute_signals(
@@ -164,13 +157,64 @@ def execute_signals(
 ) -> list[Order]:
     """Orchestrate order placement based on evaluated signals.
 
-    1. Skip if circuit breaker tripped
-    2. Reconcile target vs current positions
-    3. Check exposure and trade rate limits
-    4. Execute SELLs first (free up cash)
-    5. Execute BUYs with position sizing, respecting max_positions
-    6. Whole shares only (floor fractional)
+    For PaperBroker (with C++ backend), delegates the full sells-then-buys
+    orchestration to C++. For other brokers (e.g. AlpacaPaperBroker),
+    keeps the Python orchestration (API-bound).
     """
+    from core.execution.paper_broker import PaperBroker
+
+    rules = definition.get("rules", {})
+    max_positions = rules.get("max_positions", 5)
+    sizing_config = rules.get("position_sizing", {})
+
+    # If using PaperBroker with C++ backend, delegate entirely to C++
+    if isinstance(broker, PaperBroker) and hasattr(broker, "_cpp"):
+        from core.config import get_settings
+        s = get_settings()
+
+        max_pos_pct = s.RISK_MAX_POSITION_PCT
+        if sizing_config:
+            max_pos_pct = min(
+                sizing_config.get("max_position_pct", max_pos_pct),
+                max_pos_pct,
+            )
+
+        cpp_orders = cpp_execute_signals(
+            broker._cpp,
+            signals,
+            current_prices,
+            max_positions,
+            max_pos_pct,
+            circuit_breaker_tripped,
+            s.RISK_MAX_GROSS_EXPOSURE,
+            s.RISK_MAX_TRADES_PER_HOUR,
+        )
+
+        return [
+            Order(
+                ticker=o.ticker,
+                side=o.side,
+                quantity=o.quantity,
+                price=o.price,
+                status=o.status,
+            )
+            for o in cpp_orders
+        ]
+
+    # Fallback: Python orchestration for non-PaperBroker (e.g. AlpacaPaperBroker)
+    return _execute_signals_python(
+        broker, signals, current_prices, definition, circuit_breaker_tripped,
+    )
+
+
+def _execute_signals_python(
+    broker: BrokerBase,
+    signals: dict[str, str],
+    current_prices: dict[str, float],
+    definition: dict,
+    circuit_breaker_tripped: bool,
+) -> list[Order]:
+    """Python fallback for execute_signals (API-bound brokers)."""
     if circuit_breaker_tripped:
         logger.warning("Circuit breaker tripped — skipping all orders")
         return []
