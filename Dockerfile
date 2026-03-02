@@ -58,7 +58,7 @@ COPY . .
 ENV PORT=8080
 
 # Entrypoint handles alembic migrations when RUN_MIGRATIONS=true
-RUN chmod +x entrypoint.sh
+RUN sed -i 's/\r$//' entrypoint.sh && chmod +x entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
 
 # Shell form so $PORT is expanded at runtime
