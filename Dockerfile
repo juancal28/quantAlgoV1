@@ -54,4 +54,8 @@ COPY --from=builder /root/.cache/huggingface/ /root/.cache/huggingface/
 # Copy application code
 COPY . .
 
+# Entrypoint handles alembic migrations when RUN_MIGRATIONS=true
+RUN chmod +x entrypoint.sh
+ENTRYPOINT ["./entrypoint.sh"]
+
 CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
