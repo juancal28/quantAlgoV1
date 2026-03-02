@@ -7,7 +7,7 @@ import sys
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -105,6 +105,26 @@ class Settings(BaseSettings):
 
     # Multi-agent
     AGENT_CONFIGS: str = "[]"
+
+    @model_validator(mode="after")
+    def _fix_database_url(self) -> "Settings":
+        """Ensure DATABASE_URL uses the psycopg async driver prefix.
+
+        Railway's Postgres plugin provides URLs starting with postgresql://
+        or postgres://, but SQLAlchemy needs the +psycopg driver suffix.
+        """
+        url = self.DATABASE_URL
+        if url.startswith("postgresql://"):
+            object.__setattr__(
+                self, "DATABASE_URL",
+                url.replace("postgresql://", "postgresql+psycopg://", 1),
+            )
+        elif url.startswith("postgres://"):
+            object.__setattr__(
+                self, "DATABASE_URL",
+                url.replace("postgres://", "postgresql+psycopg://", 1),
+            )
+        return self
 
     @property
     def approved_universe_list(self) -> list[str]:
