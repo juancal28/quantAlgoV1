@@ -2,24 +2,40 @@
 FROM python:3.11-slim AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential cmake python3-dev git \
+    build-essential cmake ninja-build python3-dev git \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+
+# Layer 1: Build tools — cached until build-system requires change
+RUN pip install --no-cache-dir scikit-build-core pybind11 cmake ninja
+
+# Layer 2: CPU-only PyTorch + transformers (~200MB vs ~2GB with CUDA)
+# Railway has no GPU, so CUDA is dead weight. This layer almost never changes.
+RUN pip install --no-cache-dir torch --index-url https://download.pytorch.org/whl/cpu && \
+    pip install --no-cache-dir transformers
+
+# Layer 3: Pre-download FinBERT model — cached until transformers version changes
+RUN python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
+    AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
+    AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
+
+# Layer 4: App dependencies — cached until pyproject.toml changes
 COPY pyproject.toml ./
+RUN python -c "\
+import tomllib, pathlib; \
+t = tomllib.load(open('pyproject.toml', 'rb')); \
+deps = t['project']['dependencies']; \
+pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps))" \
+    && pip install --no-cache-dir -r /tmp/requirements.txt
+
+# Layer 5: Build C++ extension — only rebuilds when cpp/ or source changes
 COPY cpp/ ./cpp/
 COPY core/ ./core/
 COPY apps/ ./apps/
 COPY alembic/ ./alembic/
 COPY alembic.ini ./
-
-# Build C++ extension + install all deps including FinBERT (sentiment extra)
-RUN pip install --no-cache-dir ".[sentiment]"
-
-# Pre-download FinBERT model so it's baked into the image
-RUN python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
-    AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
-    AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"
+RUN pip install --no-cache-dir --no-build-isolation --no-deps .
 
 # ---- Runtime stage ----
 FROM python:3.11-slim AS runtime
