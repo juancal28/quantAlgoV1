@@ -157,6 +157,8 @@ Dependency rule:
 | Layer | Technology | Purpose |
 |---|---|---|
 | Language | Python 3.11+ | Async throughout |
+| C++ Extension | pybind11 (`_quant_core`) | Hot-path execution and backtesting logic compiled to native code |
+| Build System | scikit-build-core + CMake | Compiles C++ extension; replaces setuptools |
 | API | FastAPI | REST endpoints with Pydantic v2 validation |
 | Task Queue | Celery + Redis | Scheduled jobs with retries and visibility (Flower UI) |
 | Database | PostgreSQL 16 | All persistent state (6 tables) |
@@ -168,6 +170,28 @@ Dependency rule:
 | Backtesting | vectorbt / backtrader | Strategy simulation (adapter pattern, swappable) |
 | Broker | PaperBroker (internal) or AlpacaPaperBroker | Simulated order execution. Controlled by `BROKER_PROVIDER`. |
 
+### C++ Extension (`_quant_core`)
+
+Performance-critical execution and backtesting logic is implemented in C++ and exposed to Python via pybind11. The extension module `_quant_core` is compiled at install time by scikit-build-core + CMake.
+
+**What moved to C++:**
+
+| Component | C++ class | Python wrapper |
+|---|---|---|
+| Cost model | `CostModel` | `core/backtesting/cost_model.py` |
+| Performance metrics | `compute_metrics()` | `core/backtesting/metrics.py` |
+| Backtest engine | `BacktestEngine` | `core/backtesting/engine.py` |
+| Paper broker | `PaperBroker` | `core/execution/paper_broker.py` |
+| Risk checks | `check_exposure()`, `check_position_limit()`, `check_trade_rate()` | `core/execution/risk.py` |
+| Position sizing | `compute_position_size()` | `core/execution/position_sizing.py` |
+| Signal reconciliation | `SignalReconciler` | `core/execution/signal_evaluator.py` |
+
+The Python modules remain the public API — they delegate to `_quant_core` internally. This preserves backward compatibility: all existing imports and function signatures are unchanged. If the C++ extension is unavailable (e.g., import error), the Python fallback code runs instead.
+
+**Build:** `pip install -e ".[dev]"` triggers CMake, which compiles `cpp/src/*.cpp` and `cpp/bindings/*.cpp` into a shared library placed alongside the Python packages.
+
+**Testing:** 24 parity tests in `tests/test_cpp_parity.py` verify that C++ and Python implementations produce identical results for every component.
+
 ---
 
 ## 3. Prerequisites & Setup
@@ -175,8 +199,11 @@ Dependency rule:
 ### What You Need Installed
 
 1. **Python 3.11+**
-2. **Docker Desktop** — provides `docker` and `docker compose` for running Postgres, Redis, and Qdrant
-3. **Git** — for version control
+2. **C++ build toolchain** — required to compile the `_quant_core` pybind11 extension:
+   - **Windows:** MSVC 2022 Build Tools (`winget install Microsoft.VisualStudio.2022.BuildTools`), plus `cmake` and `ninja` (`pip install cmake ninja`)
+   - **Linux/macOS:** `build-essential`, `cmake`, `ninja-build`, `python3-dev`
+3. **Docker Desktop** — provides `docker` and `docker compose` for running Postgres, Redis, and Qdrant
+4. **Git** — for version control
 
 ### API Keys
 
@@ -204,6 +231,7 @@ source .venv/bin/activate
 source .venv/Scripts/activate
 
 # 3. Install all dependencies (including dev tools)
+# This also compiles the C++ extension via scikit-build-core + CMake
 pip install -e ".[dev]"
 
 # For sentiment analysis with FinBERT and backtesting with vectorbt:
@@ -834,6 +862,8 @@ docker compose up -d
 # Terminal 2: Start the API server
 source .venv/bin/activate
 uvicorn apps.api.main:app --reload --host 0.0.0.0 --port 8000
+# On Windows, use the wrapper that sets the correct event loop policy:
+#   python -m apps.api.run
 
 # Terminal 3: Start the Celery worker
 source .venv/bin/activate
@@ -999,15 +1029,57 @@ quantAlgoV1/
 |-- CLAUDE.md                          # Build spec + constraints
 |-- DOCUMENTATION.md                   # This file
 |-- README.md                          # Project overview
-|-- pyproject.toml                     # Dependencies and project config
+|-- pyproject.toml                     # Dependencies and build config (scikit-build-core)
 |-- .env.example                       # Template for environment variables
 |-- docker-compose.yml                 # Postgres, Redis, Qdrant, Flower
 |-- alembic.ini                        # Alembic config (DB URL injected at runtime)
+|-- Dockerfile                         # Multi-stage build (builder + runtime)
+|-- railway.toml                       # Railway deployment config
+|-- entrypoint.sh                      # Container entrypoint (Alembic migration + exec)
+|-- .dockerignore                      # Excludes .venv, tests, .git from Docker context
 |
 |-- alembic/
 |   |-- env.py                         # Async migration runner
 |   +-- versions/
 |       +-- 001_initial.py             # Creates all 6 tables
+|
+|-- cpp/                               # C++ EXTENSION MODULE (_quant_core via pybind11)
+|   |-- CMakeLists.txt                 # CMake build config
+|   |-- include/quant_core/
+|   |   |-- backtest_engine.hpp        # Backtest engine interface
+|   |   |-- cost_model.hpp             # Trading cost model
+|   |   |-- metrics.hpp                # Performance metrics (CAGR, Sharpe, etc.)
+|   |   |-- order.hpp                  # Order type definition
+|   |   |-- paper_broker.hpp           # Paper broker with slippage + commission
+|   |   |-- position.hpp               # Position tracking
+|   |   |-- position_sizer.hpp         # Equal-weight position sizing
+|   |   |-- risk_checks.hpp            # Exposure, position, rate limit checks
+|   |   |-- signal_reconciler.hpp      # Target vs held position reconciliation
+|   |   +-- types.hpp                  # Shared type aliases
+|   |-- src/
+|   |   |-- backtest_engine.cpp        # Backtest simulation loop
+|   |   |-- cost_model.cpp             # Commission + slippage + spread
+|   |   |-- metrics.cpp                # CAGR, Sharpe, max drawdown, win rate, turnover
+|   |   |-- paper_broker.cpp           # Order execution with fill simulation
+|   |   |-- position_sizer.cpp         # Cash allocation per position
+|   |   |-- risk_checks.cpp            # Pre-trade risk validation
+|   |   +-- signal_reconciler.cpp      # Buy/sell signal generation from targets
+|   |-- bindings/
+|   |   |-- module.cpp                 # pybind11 module entry point
+|   |   |-- bind_backtest.cpp          # Python bindings for backtest engine
+|   |   |-- bind_cost_model.cpp        # Python bindings for cost model
+|   |   |-- bind_metrics.cpp           # Python bindings for metrics
+|   |   |-- bind_order_position.cpp    # Python bindings for Order/Position
+|   |   |-- bind_paper_broker.cpp      # Python bindings for paper broker
+|   |   |-- bind_position_sizer.cpp    # Python bindings for position sizer
+|   |   |-- bind_risk.cpp              # Python bindings for risk checks
+|   |   +-- bind_signal_reconciler.cpp # Python bindings for signal reconciler
+|   +-- tests/                         # Catch2 C++ unit tests
+|       |-- CMakeLists.txt
+|       |-- test_backtest_engine.cpp
+|       |-- test_cost_model.cpp
+|       |-- test_metrics.cpp
+|       +-- test_paper_broker.cpp
 |
 |-- core/                              # ALL BUSINESS LOGIC LIVES HERE
 |   |-- config.py                      # Settings via pydantic-settings
@@ -1056,17 +1128,17 @@ quantAlgoV1/
 |   |       +-- event_risk_off.py     # Event risk-off strategy
 |   |
 |   |-- backtesting/
-|   |   |-- engine.py                 # Backtesting engine (BuiltinEngine)
-|   |   |-- metrics.py                # Metrics calculation
-|   |   +-- cost_model.py             # Trading cost model
+|   |   |-- engine.py                 # Backtesting engine (delegates to _quant_core)
+|   |   |-- metrics.py                # Metrics (delegates to _quant_core)
+|   |   +-- cost_model.py             # Cost model (delegates to _quant_core)
 |   |
 |   |-- execution/
 |   |   |-- broker_base.py            # Broker interface
-|   |   |-- paper_broker.py           # Paper trading broker
+|   |   |-- paper_broker.py           # Paper broker (delegates to _quant_core)
 |   |   |-- guard.py                  # PAPER_GUARD enforcement
 |   |   |-- alpaca_paper.py           # Alpaca paper broker
-|   |   |-- risk.py                   # Risk management + circuit breaker
-|   |   |-- position_sizing.py        # Position sizing
+|   |   |-- risk.py                   # Risk management (delegates to _quant_core)
+|   |   |-- position_sizing.py        # Position sizing (delegates to _quant_core)
 |   |   |-- price_feed.py             # Price abstraction (Alpaca, DB, Mock)
 |   |   +-- signal_evaluator.py       # Signal evaluation engine for live execution
 |   |
@@ -1077,6 +1149,7 @@ quantAlgoV1/
 |-- apps/                             # THIN WRAPPERS — NO BUSINESS LOGIC
 |   |-- api/
 |   |   |-- main.py                   # FastAPI app
+|   |   |-- run.py                    # Server entry point (Windows event loop fix)
 |   |   |-- deps.py                   # Dependency injection
 |   |   +-- routers/
 |   |       |-- health.py             # GET /health
@@ -1102,7 +1175,7 @@ quantAlgoV1/
 |       |-- worker.py                 # Celery worker config + beat schedule
 |       +-- jobs.py                   # Scheduled pipeline jobs
 |
-+-- tests/                            # 191 tests across 23 test files
++-- tests/                            # 215 tests across 25 test files
     |-- conftest.py                   # Fixtures (SQLite, mock config)
     |-- test_smoke.py                 # Import + config smoke tests
     |-- test_dedupe.py                # Deduplication logic
@@ -1125,18 +1198,21 @@ quantAlgoV1/
     |-- test_api_runs.py              # Runs API endpoints
     |-- test_api_backtests.py         # Backtest API endpoints
     |-- test_scheduler_jobs.py        # Celery task wiring
-    +-- test_alpaca_paper.py          # AlpacaPaperBroker + BROKER_PROVIDER
+    |-- test_alpaca_paper.py          # AlpacaPaperBroker + BROKER_PROVIDER
+    +-- test_cpp_parity.py            # C++ extension parity (24 tests)
 ```
 
 ---
 
 ## 16. Running Tests
 
-191 tests across 23 test files. All tests run with mocks — no external services required:
+215 tests across 25 test files. All tests run with mocks — no external services required:
 
 ```bash
 pytest
 ```
+
+This includes 24 C++/Python parity tests (`test_cpp_parity.py`) that verify the `_quant_core` extension produces identical results to the original Python implementations for cost model, metrics, paper broker, risk checks, position sizing, signal reconciliation, and backtesting.
 
 With coverage:
 
@@ -1365,24 +1441,33 @@ All development, testing, and paper trading validation happens on the local mach
 | Qdrant | Docker container | ~200 MB RAM |
 | Flower | Docker container | ~100 MB RAM |
 | FastAPI server | Python process (venv) | ~100 MB RAM |
-| Celery worker | Python process (venv) | ~100 MB RAM |
+| Celery worker | Python process (venv) | ~100 MB RAM (+ `_quant_core` C++ extension, negligible overhead) |
 | FinBERT model | Loaded by Celery worker | ~1.5 GB RAM |
 | **Total** | | **~2.3 GB RAM** |
 
-### Stage 2: Railway Cloud Deployment (Future)
+### Stage 2: Railway Cloud Deployment (In Progress)
 
-Migrate to [Railway](https://railway.app) for always-on operation during market hours.
+Migrate to [Railway](https://railway.app) for always-on operation during market hours. The Dockerfile, `railway.toml`, and `entrypoint.sh` are already committed.
+
+**Docker build:** Multi-stage (`builder` + `runtime`). The builder stage compiles the C++ extension, installs CPU-only PyTorch (no CUDA — Railway has no GPU), and pre-downloads the FinBERT model so it's cached in the image layer. The runtime stage copies only the installed packages and the HuggingFace model cache, keeping the final image lean.
 
 **Railway service mapping:**
 
-| Local Component | Railway Equivalent |
-|---|---|
-| Docker Postgres | Railway managed Postgres plugin |
-| Docker Redis | Railway managed Redis plugin |
-| Docker Qdrant | Railway service (custom Docker image) |
-| `uvicorn apps.api.main:app` | Railway web service |
-| `celery -A apps.scheduler.worker worker` | Railway worker service |
-| Docker Flower | Railway service (optional) |
+| Railway Service | Start Command | Role |
+|---|---|---|
+| **API** (web) | `entrypoint.sh uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT` | FastAPI server. Runs Alembic migrations on boot (via `entrypoint.sh` with retry). Health check on `/health` (300s timeout). |
+| **Worker** | `entrypoint.sh celery -A apps.scheduler.worker worker --loglevel=info` | Celery worker. Picks tasks off Redis and executes them (news cycles, paper trade ticks). |
+| **Beat** | `entrypoint.sh celery -A apps.scheduler.worker beat --loglevel=info` | Celery scheduler. Publishes tasks to Redis on a timer (news cycle every 120s, paper trade tick every 60s). Does not execute tasks. |
+| **Postgres** | Railway managed plugin | Persistent state (6 tables). `DATABASE_URL` injected automatically. |
+| **Redis** | Railway managed plugin | Celery message broker + result backend. `REDIS_URL` injected automatically. |
+| **Qdrant** | Railway service (custom Docker image) | Vector DB for news embeddings. |
+| **Flower** | Railway service (optional) | Celery task dashboard on port 5555. |
+
+All three application services (API, Worker, Beat) share the same Docker image and codebase — they differ only in their start command. Set `RUN_MIGRATIONS=true` only on the API service to avoid migration races.
+
+**`entrypoint.sh`:** Runs Alembic migrations with retry (5 attempts, 5s backoff) when `RUN_MIGRATIONS=true`, then `exec`s the start command. Beat and Worker services set `RUN_MIGRATIONS=false` (or leave it unset) to skip migrations.
+
+**`railway.toml`:** Configures the API service with Dockerfile builder, health check path, 300s health check timeout (accounts for C++ extension compilation on first deploy), and restart-on-failure policy (max 5 retries).
 
 ### Stage 3: Kubernetes Orchestration (Future)
 
