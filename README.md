@@ -114,6 +114,7 @@ tests/          191 tests across 23 files (all run with mocks)
 
 The v1 system has solid engineering infrastructure. Planned future phases add quantitative depth:
 
+- **Account reconciliation** — Broker state rehydration on restart, per-tick position/PnL drift detection against the database
 - **Alpha research framework** — Information Coefficient (IC) computation, factor decay analysis
 - **Statistical validation** — Sharpe ratio significance testing, walk-forward validation, bootstrap confidence intervals
 - **Portfolio optimization** — Mean-variance, risk parity, Black-Litterman

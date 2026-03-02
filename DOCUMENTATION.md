@@ -1274,7 +1274,33 @@ The Alpaca server's trading tools bypass our safety rails (PAPER_GUARD, strategy
 
 The v1 system has solid engineering infrastructure but limited mathematical depth. The following phases add the quantitative rigor expected at professional quant firms. Each phase builds on the previous one — implement in order.
 
-### Phase 13: Alpha Research Framework & Factor Models
+### Phase 13: Account Reconciliation & State Persistence
+
+**Goal:** Eliminate broker state loss on Celery worker restarts by rehydrating positions and realized PnL from the `pnl_snapshots` table, and add continuous reconciliation to detect drift between in-memory broker state and the database.
+
+**New module:** `core/execution/reconciliation.py`
+
+**What to build:**
+
+- **Broker state rehydration on startup**: When a broker is first accessed after a worker restart, load the most recent `pnl_snapshot` for the strategy. For `PaperBroker`, replay `positions` JSONB into the broker via synthetic BUY orders at stored `avg_entry_price`, and set realized PnL from the snapshot. For `AlpacaPaperBroker`, positions are authoritative from Alpaca — only `realized_pnl` is restored from the DB snapshot.
+- **Per-tick lightweight reconciliation**: On every `paper_trade_tick`, compare broker positions and realized PnL against the most recent DB snapshot. Flag quantity mismatches (integer share count must match exactly) and PnL drift exceeding $1.00. Log warnings for discrepancies but do not block trading.
+- **Full account status builder**: `get_account_status()` produces a complete snapshot of broker state (cash, positions, realized PnL, portfolio value), DB state (last snapshot date, stored positions, stored realized PnL), broker source (`"internal"` or `"alpaca"`), and the reconciliation report.
+- **New API endpoint**: `GET /account/status?strategy={name}` — returns full account status JSON. Thin wrapper delegating to `core/execution/reconciliation.py`.
+- **New MCP monitoring tool**: `monitor_account_reconciliation` — inputs `strategy_name`, returns account status with reconciliation report.
+
+**Key constraints:**
+
+- Rehydration must preserve the PAPER_GUARD invariant — all synthetic BUY orders go through `broker.submit_order()` which calls `ensure_paper_mode()`.
+- No schema migration required — `pnl_snapshots` already has `positions` JSONB and `realized_pnl`.
+- No new package dependencies.
+
+**Integration:** Modify `apps/mcp_server/tools/execution.py` to call `rehydrate_broker_state()` on broker construction and `reconcile_tick()` each subsequent tick. Add `apps/api/routers/account.py` and `apps/mcp_server/tools/account.py`.
+
+**New test file:** `tests/test_account_reconciliation.py` — rehydration from snapshot, fresh start no-op, quantity mismatch detection, PnL drift detection, account status structure.
+
+---
+
+### Phase 14: Alpha Research Framework & Factor Models
 
 **Goal:** Replace ad-hoc signal thresholds with a statistically rigorous factor evaluation pipeline.
 
@@ -1291,7 +1317,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 14: Statistical Validation & Backtest Integrity
+### Phase 15: Statistical Validation & Backtest Integrity
 
 **Goal:** Move beyond "Sharpe > 0.5" to statistically defensible strategy validation.
 
@@ -1310,7 +1336,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 15: Portfolio Optimization
+### Phase 16: Portfolio Optimization
 
 **Goal:** Replace equal-weight position sizing with mathematically optimal portfolio construction.
 
@@ -1328,7 +1354,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 16: Time-Varying Volatility & Vol Targeting
+### Phase 17: Time-Varying Volatility & Vol Targeting
 
 **Goal:** Replace flat rolling-window volatility with proper time-series volatility models.
 
@@ -1345,7 +1371,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 17: Risk Analytics & VaR/CVaR
+### Phase 18: Risk Analytics & VaR/CVaR
 
 **Goal:** Replace simple threshold-based risk checks with distributional risk modeling.
 
@@ -1362,7 +1388,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 18: Regime Detection (Hidden Markov Models)
+### Phase 19: Regime Detection (Hidden Markov Models)
 
 **Goal:** Detect bull/bear market regimes and condition strategy behavior on the current regime.
 
@@ -1379,7 +1405,7 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
-### Phase 19: Pairs Trading & Statistical Arbitrage
+### Phase 20: Pairs Trading & Statistical Arbitrage
 
 **Goal:** Add market-neutral strategies based on cointegration and mean-reversion of price spreads.
 
@@ -1400,29 +1426,31 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 ### Implementation Priority
 
 ```
-Phase 13 (Alpha/IC)
+Phase 13 (Account Reconciliation)  <- standalone
   |
-Phase 14 (Statistical Tests) <- depends on Phase 13
+Phase 14 (Alpha/IC)
   |
-Phase 15 (Portfolio Optimization) <- depends on Phase 14
+Phase 15 (Statistical Tests) <- depends on Phase 14
   |
-Phase 16 (GARCH/Vol) <- depends on Phase 15
+Phase 16 (Portfolio Optimization) <- depends on Phase 15
   |
-Phase 17 (VaR/CVaR) <- depends on Phase 16
+Phase 17 (GARCH/Vol) <- depends on Phase 16
   |
-Phase 18 (Regime HMM) <- depends on Phase 16
+Phase 18 (VaR/CVaR) <- depends on Phase 17
   |
-Phase 19 (Pairs Trading) <- independent, benefits from Phases 14-16
+Phase 19 (Regime HMM) <- depends on Phase 17
+  |
+Phase 20 (Pairs Trading) <- independent, benefits from Phases 15-17
 ```
 
 ### New Dependencies
 
 | Package | Phase | Purpose |
 |---|---|---|
-| `statsmodels` | 14, 19 | ADF test, OLS, cointegration, statistical tests |
-| `cvxpy` | 15 | Convex optimization for portfolio construction |
-| `arch` | 16 | GARCH models |
-| `hmmlearn` | 18 | Hidden Markov Models |
+| `statsmodels` | 15, 20 | ADF test, OLS, cointegration, statistical tests |
+| `cvxpy` | 16 | Convex optimization for portfolio construction |
+| `arch` | 17 | GARCH models |
+| `hmmlearn` | 19 | Hidden Markov Models |
 
 ---
 
