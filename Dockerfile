@@ -54,8 +54,12 @@ COPY --from=builder /root/.cache/huggingface/ /root/.cache/huggingface/
 # Copy application code
 COPY . .
 
+# Default port for local dev; Railway overrides via $PORT env var
+ENV PORT=8080
+
 # Entrypoint handles alembic migrations when RUN_MIGRATIONS=true
 RUN chmod +x entrypoint.sh
 ENTRYPOINT ["./entrypoint.sh"]
 
-CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8080"]
+# Shell form so $PORT is expanded at runtime
+CMD ["sh", "-c", "uvicorn apps.api.main:app --host 0.0.0.0 --port $PORT"]
