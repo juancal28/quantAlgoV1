@@ -39,7 +39,13 @@ dependencies = [
     "anthropic>=0.40",
     # C++ extension runtime dep
     "pybind11>=2.12",
+    # CLI
+    "typer>=0.9",
+    "rich>=13.0",
 ]
+
+[project.scripts]
+quant = "cli.main:app"
 
 [project.optional-dependencies]
 sentiment = [
@@ -60,7 +66,7 @@ dev = [
 
 [tool.scikit-build]
 cmake.source-dir = "cpp"
-wheel.packages = ["core", "apps"]
+wheel.packages = ["core", "apps", "cli"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
