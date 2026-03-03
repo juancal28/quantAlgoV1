@@ -11,11 +11,23 @@ from rich.table import Table
 
 from cli.views.news_view import _sentiment_style
 from cli.views.pnl_view import _pnl_style, _sparkline
-from cli.views.runs_view import _status_style as _run_status
+from cli.views.runs_view import _format_timestamp, _status_style as _run_status
 from cli.views.strategies_view import _status_style as _strat_status
 
 
-def _status_panel(data: dict[str, Any]) -> Panel:
+def _last_news_cycle(runs: list[dict[str, Any]]) -> str:
+    """Find the most recent completed news cycle (ingest) run and format its timestamp."""
+    for r in runs:
+        if r.get("run_type") == "ingest" and r.get("status") in ("ok", "fail"):
+            ts = _format_timestamp(r.get("ended_at") or r.get("started_at"))
+            status = r.get("status", "")
+            if status == "ok":
+                return f"[green]{ts}[/]"
+            return f"[red]{ts} (failed)[/]"
+    return "[dim]never[/]"
+
+
+def _status_panel(data: dict[str, Any], runs: list[dict[str, Any]]) -> Panel:
     table = Table(show_header=False, box=None, padding=(0, 1))
     table.add_column("K", style="bold")
     table.add_column("V")
@@ -24,6 +36,7 @@ def _status_panel(data: dict[str, Any]) -> Panel:
     market = data.get("market_open", False)
     table.add_row("Market", "[green]OPEN[/]" if market else "[dim]CLOSED[/]")
     table.add_row("News (2h)", str(data.get("news_count_last_2h", 0)))
+    table.add_row("Last Ingest", _last_news_cycle(runs))
     counts = data.get("strategy_counts", {})
     table.add_row("Strategies", ", ".join(f"{k}:{v}" for k, v in counts.items()) or "--")
     services = data.get("services", {})
@@ -66,12 +79,12 @@ def _runs_panel(runs: list[dict[str, Any]]) -> Panel:
     table = Table(show_header=True, box=None, padding=(0, 1))
     table.add_column("Type", width=12)
     table.add_column("Status", width=8)
-    table.add_column("Started", width=16)
+    table.add_column("Started", width=20)
     for r in runs[:5]:
         table.add_row(
             r.get("run_type", ""),
             _run_status(r.get("status", "")),
-            r.get("started_at", "")[:16],
+            _format_timestamp(r.get("started_at")),
         )
     return Panel(table, title="Recent Runs", border_style="yellow")
 
@@ -99,7 +112,7 @@ def build_dashboard(
     runs: list[dict[str, Any]],
     pnl_data: dict[str, list[dict[str, Any]]],
 ) -> Group:
-    top = Columns([_status_panel(status_data), _news_panel(news)], equal=True, expand=True)
+    top = Columns([_status_panel(status_data, runs), _news_panel(news)], equal=True, expand=True)
     mid = Columns([_strategies_panel(strategies), _runs_panel(runs)], equal=True, expand=True)
     bottom = _pnl_panel(pnl_data)
     return Group(top, mid, bottom)

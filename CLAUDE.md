@@ -6,6 +6,8 @@ A modular, paper-first quantitative trading system that ingests financial news, 
 
 **Default mode: PAPER ONLY. `TRADING_MODE=paper` is the only valid value. Hard exit on startup if changed.**
 
+**Deployment: Railway.** The production backend runs on Railway. All environment variable changes, service configuration, and infrastructure updates must target the Railway deployment. Use `railway variables --set` for env changes, not local `.env` edits (local `.env` is for local dev only). The Railway project has Postgres, Redis, and Qdrant services already provisioned.
+
 ---
 
 ## Goals
