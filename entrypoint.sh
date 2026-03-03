@@ -10,4 +10,9 @@ if [ "$RUN_MIGRATIONS" = "true" ]; then
     done
 fi
 
-exec "$@"
+# If a command was passed (worker/beat), run it; otherwise start uvicorn
+if [ $# -gt 0 ]; then
+    exec "$@"
+else
+    exec uvicorn apps.api.main:app --host 0.0.0.0 --port "${PORT:-8080}"
+fi
