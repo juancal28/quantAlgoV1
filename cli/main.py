@@ -54,7 +54,7 @@ def help() -> None:
     commands = [
         ("quant help", "Show this help page"),
         ("quant status", "System health: trading mode, market, services, strategy counts"),
-        ("quant news [-m MINS] [-n LIMIT]", "Recent news articles with sentiment scores"),
+        ("quant news [-m MINS] [-n LIMIT] [--ingested]", "Recent news articles with sentiment scores"),
         ("quant strategies list [-s STATUS]", "List strategies (filter: active, pending_approval, archived)"),
         ("quant strategies approve NAME ID", "Approve a pending strategy version (with confirmation)"),
         ("quant runs [-n LIMIT]", "Recent pipeline runs (ingest, backtest, etc.)"),
