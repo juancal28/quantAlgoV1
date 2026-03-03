@@ -288,3 +288,20 @@ def test_strategies_list_empty_filter(mock_get):
     result = runner.invoke(app, ["strategies", "list"])
     assert result.exit_code == 0
     assert "No strategies" in result.output
+
+
+def test_help_command(tmp_path, monkeypatch):
+    # Avoid SystemExit when no API URL is configured
+    monkeypatch.setenv("QUANT_API_URL", "https://test.example.com")
+    result = runner.invoke(app, ["help"])
+    assert result.exit_code == 0
+    assert "Commands" in result.output
+    assert "Examples" in result.output
+    assert "Configuration" in result.output
+    assert "quant status" in result.output
+    assert "quant news" in result.output
+    assert "quant cycle" in result.output
+    assert "quant dashboard" in result.output
+    assert "quant strategies" in result.output
+    assert "quant pnl" in result.output
+    assert "quant config set-url" in result.output
