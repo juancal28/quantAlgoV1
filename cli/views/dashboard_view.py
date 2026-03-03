@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from rich.columns import Columns
-from rich.console import Console, Group
+from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 
@@ -112,7 +111,9 @@ def build_dashboard(
     runs: list[dict[str, Any]],
     pnl_data: dict[str, list[dict[str, Any]]],
 ) -> Group:
-    top = Columns([_status_panel(status_data, runs), _news_panel(news)], equal=True, expand=True)
-    mid = Columns([_strategies_panel(strategies), _runs_panel(runs)], equal=True, expand=True)
-    bottom = _pnl_panel(pnl_data)
-    return Group(top, mid, bottom)
+    grid = Table.grid(expand=True)
+    grid.add_column(ratio=1)
+    grid.add_column(ratio=1)
+    grid.add_row(_status_panel(status_data, runs), _news_panel(news))
+    grid.add_row(_runs_panel(runs), _strategies_panel(strategies))
+    return Group(grid, _pnl_panel(pnl_data))

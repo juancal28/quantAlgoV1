@@ -57,6 +57,7 @@ def help() -> None:
         ("quant news [-m MINS] [-n LIMIT] [--ingested]", "Recent news articles with sentiment scores"),
         ("quant strategies list [-s STATUS]", "List strategies (filter: active, pending_approval, archived)"),
         ("quant strategies approve NAME ID", "Approve a pending strategy version (with confirmation)"),
+        ("quant strategies deactivate NAME", "Deactivate (archive) the active version of a strategy"),
         ("quant runs [-n LIMIT]", "Recent pipeline runs (ingest, backtest, etc.)"),
         ("quant pnl STRATEGY [-d DAYS]", "Daily PnL snapshots with sparkline"),
         ("quant cycle", "Trigger a manual news cycle"),
