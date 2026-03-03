@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +92,23 @@ async def count_activations_today(
     )
     result = await session.execute(stmt)
     return result.scalar_one()
+
+
+async def get_expired_active_strategies(
+    session: AsyncSession, max_age_hours: int
+) -> list[StrategyVersion]:
+    """Return active strategies whose activated_at is older than max_age_hours."""
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
+    stmt = (
+        select(StrategyVersion)
+        .where(
+            StrategyVersion.status == "active",
+            StrategyVersion.activated_at.isnot(None),
+            StrategyVersion.activated_at < cutoff,
+        )
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
 
 
 async def update_status(

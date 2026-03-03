@@ -40,6 +40,13 @@ def _build_beat_schedule(settings) -> dict:
             "schedule": 60.0,
         }
 
+    # Expire active strategies past TTL (only when configured)
+    if settings.STRATEGY_MAX_AGE_HOURS > 0:
+        schedule["expire-strategies-periodic"] = {
+            "task": "apps.scheduler.jobs.run_expire_strategies",
+            "schedule": 3600.0,
+        }
+
     return schedule
 
 

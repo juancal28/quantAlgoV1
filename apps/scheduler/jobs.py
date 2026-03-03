@@ -462,3 +462,80 @@ async def _run_auto_approve_async(
         return result
 
     return {"approved": approved, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# Strategy expiry task
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=300,
+    name="apps.scheduler.jobs.run_expire_strategies",
+)
+def run_expire_strategies(self) -> dict:
+    """Archive active strategies that have exceeded STRATEGY_MAX_AGE_HOURS."""
+    settings = get_settings()
+    if settings.STRATEGY_MAX_AGE_HOURS <= 0:
+        return {"skipped": True, "reason": "expiry_disabled"}
+    return asyncio.run(_run_expire_strategies_async())
+
+
+async def _run_expire_strategies_async(
+    _session: "AsyncSession | None" = None,
+) -> dict:
+    """Async implementation: expire active strategies older than the configured TTL."""
+    from core.agent.approval import deactivate_strategy
+    from core.storage.repos import strategy_repo
+
+    settings = get_settings()
+    max_age_hours = settings.STRATEGY_MAX_AGE_HOURS
+
+    archived: list[str] = []
+    errors: list[str] = []
+
+    async def _execute(session: "AsyncSession") -> dict:
+        expired = await strategy_repo.get_expired_active_strategies(
+            session, max_age_hours
+        )
+
+        for version in expired:
+            try:
+                await deactivate_strategy(
+                    session,
+                    strategy_name=version.name,
+                    reason="TTL expired",
+                    trigger="scheduler",
+                )
+                archived.append(f"{version.name}@v{version.version}")
+                logger.info(
+                    "Expired strategy %s version %s (TTL=%dh)",
+                    version.name,
+                    version.version,
+                    max_age_hours,
+                )
+            except ValueError as exc:
+                errors.append(f"{version.name}@v{version.version}: {exc}")
+                logger.warning(
+                    "Expire failed for %s v%s: %s",
+                    version.name,
+                    version.version,
+                    exc,
+                )
+
+        return {"archived": archived, "errors": errors}
+
+    if _session is not None:
+        return await _execute(_session)
+
+    from core.storage.db import get_session
+
+    async for session in get_session():
+        result = await _execute(session)
+        await session.commit()
+        return result
+
+    return {"archived": archived, "errors": errors}

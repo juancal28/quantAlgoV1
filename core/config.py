@@ -94,6 +94,7 @@ class Settings(BaseSettings):
     STRATEGY_MIN_BACKTEST_DAYS: int = 252
     STRATEGY_APPROVED_UNIVERSE: str = "SPY,QQQ,AAPL,MSFT,AMZN,GOOGL,META,NVDA,BRK.B,JPM"
     PENDING_APPROVAL_AUTO_APPROVE_MINUTES: int = 5
+    STRATEGY_MAX_AGE_HOURS: int = 0  # 0 = disabled; non-zero = auto-archive after N hours
 
     # Celery
     CELERY_WORKER_CONCURRENCY: int = 2

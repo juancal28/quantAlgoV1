@@ -75,6 +75,44 @@ async def submit_for_approval(
     return version
 
 
+async def deactivate_strategy(
+    session: AsyncSession,
+    strategy_name: str,
+    reason: str = "manual deactivation",
+    trigger: str = "human",
+) -> StrategyVersion:
+    """Deactivate (archive) the active version of a strategy.
+
+    1. Look up the active version by name
+    2. Set status to 'archived'
+    3. Write audit log with action='deactivated'
+
+    Raises ValueError if no active version exists.
+    """
+    active = await strategy_repo.get_active_by_name(session, strategy_name)
+    if active is None:
+        raise ValueError(
+            f"No active version found for strategy {strategy_name!r}"
+        )
+
+    active.status = "archived"
+    await session.flush()
+
+    audit = StrategyAuditLog(
+        strategy_name=strategy_name,
+        version_id=active.id,
+        action="deactivated",
+        trigger=trigger,
+        before_definition=active.definition,
+        after_definition=active.definition,
+        diff_fields=[],
+    )
+    session.add(audit)
+    await session.flush()
+
+    return active
+
+
 async def approve_strategy(
     session: AsyncSession,
     strategy_name: str,

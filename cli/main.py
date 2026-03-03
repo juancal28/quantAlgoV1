@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from cli.commands.completion import completion_app
 from cli.commands.cycle import cycle
 from cli.commands.dashboard import dashboard
 from cli.commands.news import news
@@ -14,16 +15,19 @@ from cli.commands.pnl import pnl
 from cli.commands.runs import runs
 from cli.commands.status import status
 from cli.commands.strategies import strategies_app
+from cli.commands.upgrade import upgrade
 from cli.config import CONFIG_FILE, get_api_url, set_api_url
 
 app = typer.Typer(
     name="quant",
     help="Terminal CLI for the Quant News-RAG Trading System.",
     no_args_is_help=True,
+    add_completion=False,
 )
 
 # Sub-groups
 config_app = typer.Typer(help="CLI configuration.")
+app.add_typer(completion_app, name="completion")
 app.add_typer(config_app, name="config")
 app.add_typer(strategies_app, name="strategies")
 
@@ -34,6 +38,7 @@ app.command()(runs)
 app.command()(pnl)
 app.command()(cycle)
 app.command()(dashboard)
+app.command()(upgrade)
 
 
 @app.command()
@@ -56,7 +61,11 @@ def help() -> None:
         ("quant pnl STRATEGY [-d DAYS]", "Daily PnL snapshots with sparkline"),
         ("quant cycle", "Trigger a manual news cycle"),
         ("quant dashboard [-i SECS]", "Live auto-refreshing dashboard (Ctrl+C to exit)"),
+        ("quant upgrade", "Pull latest changes from git and reinstall"),
         ("quant config set-url URL", "Save the Railway API URL"),
+        ("quant completion install", "Install bash tab-completion"),
+        ("quant completion show", "Print completion script to stdout"),
+        ("quant completion uninstall", "Remove bash tab-completion"),
     ]
 
     for cmd, desc in commands:
