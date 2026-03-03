@@ -68,6 +68,7 @@ def _generate_bash_script(tree: dict[str, list[str]]) -> str:
 
     case_block = "\n".join(case_arms)
 
+    # Match both "quant" and "quant.exe" for Windows Git Bash compatibility.
     return f"""\
 # Bash completion for {_PROG} CLI (auto-generated)  {_MARKER}
 _{_PROG}_completion() {{
@@ -76,8 +77,8 @@ _{_PROG}_completion() {{
     cur="${{COMP_WORDS[COMP_CWORD]}}"
     prev="${{COMP_WORDS[COMP_CWORD-1]}}"
 
-    # Top-level commands
-    if [[ "$prev" == "{_PROG}" ]]; then
+    # Top-level commands (match both quant and quant.exe for Git Bash on Windows)
+    if [[ "$prev" == "{_PROG}" || "$prev" == "{_PROG}.exe" ]]; then
         COMPREPLY=( $(compgen -W "{top_cmds}" -- "$cur") )
         return 0
     fi
@@ -87,7 +88,7 @@ _{_PROG}_completion() {{
 {case_block}
     esac
 }}
-complete -o default -F _{_PROG}_completion {_PROG}
+complete -o default -F _{_PROG}_completion {_PROG} {_PROG}.exe
 """
 
 
