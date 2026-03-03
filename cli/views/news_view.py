@@ -4,18 +4,24 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from rich.console import Console
 from rich.table import Table
 
 
+_PACIFIC = ZoneInfo("America/Los_Angeles")
+
+
 def _format_published(raw: str) -> str:
-    """Format ISO timestamp into a readable 'Mar 02  14:30' style string."""
+    """Format ISO timestamp into a readable 'Mar 02  14:30 PST' style string."""
     if not raw:
         return "--"
     try:
         dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-        return dt.strftime("%b %d  %H:%M")
+        dt_pac = dt.astimezone(_PACIFIC)
+        tz_abbr = dt_pac.strftime("%Z")  # PST or PDT
+        return dt_pac.strftime(f"%b %d  %H:%M {tz_abbr}")
     except (ValueError, TypeError):
         return raw[:16]
 
@@ -38,7 +44,7 @@ def render_news(articles: list[dict[str, Any]], console: Console | None = None) 
         return
 
     table = Table(title="Recent News", show_lines=False)
-    table.add_column("Published", style="dim", width=14)
+    table.add_column("Published", style="dim", width=18)
     table.add_column("Title", max_width=50)
     table.add_column("Source", width=12)
     table.add_column("Score", justify="right", width=7)
