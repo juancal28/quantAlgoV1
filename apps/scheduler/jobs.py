@@ -249,7 +249,9 @@ async def _run_news_cycle_async(
     from core.storage.db import get_session
 
     async for session in get_session():
-        return await _execute(session)
+        result = await _execute(session)
+        await session.commit()
+        return result
 
     return details
 
@@ -317,6 +319,8 @@ async def _run_paper_trade_tick_all_async(
     from core.storage.db import get_session
 
     async for session in get_session():
-        return await _execute(session)
+        result = await _execute(session)
+        await session.commit()
+        return result
 
     return results

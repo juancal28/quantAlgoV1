@@ -56,7 +56,7 @@ class RSSFetcher(BaseFetcher):
 
         articles: list[FetchedArticle] = []
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
             for url in feed_urls:
                 try:
                     fetched = await self._fetch_feed(client, url, max_items - len(articles))
