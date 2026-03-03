@@ -63,9 +63,9 @@ def help() -> None:
         ("quant dashboard [-i SECS]", "Live auto-refreshing dashboard (Ctrl+C to exit)"),
         ("quant upgrade", "Pull latest changes from git and reinstall"),
         ("quant config set-url URL", "Save the Railway API URL"),
-        ("quant completion install", "Install bash tab-completion"),
-        ("quant completion show", "Print completion script to stdout"),
-        ("quant completion uninstall", "Remove bash tab-completion"),
+        ("quant completion install [-s SHELL]", "Install tab-completion (bash/zsh/all, auto-detects)"),
+        ("quant completion show [-s SHELL]", "Print completion script to stdout"),
+        ("quant completion uninstall [-s SHELL]", "Remove tab-completion"),
     ]
 
     for cmd, desc in commands:

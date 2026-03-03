@@ -58,3 +58,27 @@ def approve_strategy(
         f"Approved: {result.get('strategy_version_id')} "
         f"[status={result.get('status')}, by={result.get('approved_by')}]"
     )
+
+
+@strategies_app.command("deactivate")
+def deactivate_strategy(
+    name: str = typer.Argument(..., help="Strategy name to deactivate"),
+) -> None:
+    """Deactivate (archive) the active version of a strategy."""
+    # Fetch active version to show detail before confirming
+    try:
+        active = client.get(f"/strategies/{name}/active")
+        render_strategy_detail(active)
+    except Exception:
+        typer.echo(f"No active version found for {name!r}.")
+        raise typer.Exit(code=1)
+
+    if not typer.confirm("Deactivate this strategy?"):
+        typer.echo("Cancelled.")
+        raise typer.Exit()
+
+    result = client.post(f"/strategies/{name}/deactivate")
+    typer.echo(
+        f"Deactivated: {result.get('strategy_version_id')} "
+        f"[status={result.get('status')}, name={result.get('name')}]"
+    )

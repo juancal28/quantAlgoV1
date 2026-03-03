@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.api.deps import get_db
-from core.agent.approval import approve_strategy
+from core.agent.approval import approve_strategy, deactivate_strategy
 from core.storage.repos import strategy_repo
 
 router = APIRouter(prefix="/strategies", tags=["strategies"])
@@ -27,6 +27,12 @@ class StrategyVersionResponse(BaseModel):
     approved_by: str | None = None
     reason: str
     backtest_metrics: dict[str, Any] | None = None
+
+
+class DeactivateResponse(BaseModel):
+    strategy_version_id: str
+    status: str
+    name: str
 
 
 class ApproveResponse(BaseModel):
@@ -96,4 +102,23 @@ async def approve_version(
         strategy_version_id=str(activated.id),
         status=activated.status,
         approved_by=activated.approved_by or "human",
+    )
+
+
+@router.post("/{name}/deactivate", response_model=DeactivateResponse)
+async def deactivate_version(
+    name: str,
+    session: AsyncSession = Depends(get_db),
+) -> DeactivateResponse:
+    try:
+        archived = await deactivate_strategy(
+            session, name, reason="manual deactivation", trigger="human"
+        )
+        await session.commit()
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    return DeactivateResponse(
+        strategy_version_id=str(archived.id),
+        status=archived.status,
+        name=archived.name,
     )
