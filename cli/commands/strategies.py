@@ -9,7 +9,18 @@ import typer
 from cli import client
 from cli.views.strategies_view import render_strategies, render_strategy_detail
 
-strategies_app = typer.Typer(help="Strategy management.")
+strategies_app = typer.Typer(
+    help="Strategy management.",
+    invoke_without_command=True,
+)
+
+
+@strategies_app.callback()
+def strategies_default(ctx: typer.Context) -> None:
+    """List all strategies when no subcommand is given."""
+    if ctx.invoked_subcommand is None:
+        data = client.get("/strategies")
+        render_strategies(data)
 
 
 @strategies_app.command("list")

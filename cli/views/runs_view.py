@@ -18,6 +18,53 @@ def _status_style(status: str) -> str:
     return status
 
 
+def _summarize_details(details: dict[str, Any]) -> str:
+    """Build a human-readable summary from run details, prioritizing key fields."""
+    if not details:
+        return ""
+
+    parts: list[str] = []
+
+    # Early exit reason is the most important thing to show
+    if "early_exit" in details:
+        parts.append(f"[yellow]{details['early_exit']}[/]")
+
+    # Error message for failed runs
+    if "error" in details:
+        err = str(details["error"])[:60]
+        parts.append(f"[red]{err}[/]")
+
+    # Skipped (singleton lock)
+    if details.get("skipped"):
+        reason = details.get("reason", "lock_held")
+        parts.append(f"[dim]skipped ({reason})[/]")
+        return ", ".join(parts)
+
+    # Key metrics
+    if "ingested" in details:
+        parts.append(f"ingested={details['ingested']}")
+    if "confidence" in details:
+        parts.append(f"confidence={details['confidence']:.2f}")
+    if "valid" in details:
+        valid = details["valid"]
+        parts.append(f"valid={'[green]yes[/]' if valid else '[red]no[/]'}")
+    if "in_sample_passed" in details:
+        p = details["in_sample_passed"]
+        parts.append(f"IS={'[green]pass[/]' if p else '[red]fail[/]'}")
+    if "oos_passed" in details:
+        p = details["oos_passed"]
+        parts.append(f"OOS={'[green]pass[/]' if p else '[red]fail[/]'}")
+    if "submitted_version_id" in details:
+        vid = str(details["submitted_version_id"])[:8]
+        parts.append(f"[green]submitted={vid}...[/]")
+
+    # Agent name if present
+    if "agent_name" in details:
+        parts.append(f"agent={details['agent_name']}")
+
+    return ", ".join(parts)
+
+
 def render_runs(runs: list[dict[str, Any]], console: Console | None = None) -> None:
     console = console or Console()
 
@@ -30,17 +77,17 @@ def render_runs(runs: list[dict[str, Any]], console: Console | None = None) -> N
     table.add_column("Status", width=10)
     table.add_column("Started", style="dim", width=20)
     table.add_column("Ended", style="dim", width=20)
-    table.add_column("Details", max_width=40)
+    table.add_column("Details", min_width=30, no_wrap=False)
 
     for r in runs:
         details = r.get("details") or {}
-        detail_str = ", ".join(f"{k}={v}" for k, v in list(details.items())[:3]) if details else ""
+        detail_str = _summarize_details(details)
         table.add_row(
             r.get("run_type", ""),
             _status_style(r.get("status", "")),
             r.get("started_at", "")[:19],
             (r.get("ended_at") or "")[:19] or "[dim]--[/]",
-            detail_str[:40] or "[dim]--[/]",
+            detail_str or "[dim]--[/]",
         )
 
     console.print(table)
