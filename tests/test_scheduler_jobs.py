@@ -21,24 +21,32 @@ async def test_paper_trade_tick_no_active_strategies(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_news_cycle_creates_run_record(db_session: AsyncSession):
-    """News cycle should create a run record and early-exit on 0 ingested docs."""
+    """News cycle should create a run record and proceed to proposal on 0 ingested docs."""
+    from apps.mcp_server.schemas import ProposeStrategyOutput
     from apps.scheduler.jobs import _run_news_cycle_async
 
     mock_ingest_output = AsyncMock(ingested=0, doc_ids=[])
     mock_ingest = AsyncMock(return_value=mock_ingest_output)
+    mock_propose = AsyncMock(
+        return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
+    )
 
     with patch(
         "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
+    ), patch(
+        "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
     ):
         result = await _run_news_cycle_async(_session=db_session)
 
-    assert result["early_exit"] == "no_new_docs"
+    assert result.get("skipped_embed_sentiment") is True
+    assert result["early_exit"] == "low_confidence"
     assert result["ingested"] == 0
 
 
 @pytest.mark.asyncio
 async def test_news_cycle_with_existing_run(db_session: AsyncSession):
     """News cycle with a pre-created run_id should use that run record."""
+    from apps.mcp_server.schemas import ProposeStrategyOutput
     from apps.scheduler.jobs import _run_news_cycle_async
 
     # Create a run record first
@@ -48,15 +56,20 @@ async def test_news_cycle_with_existing_run(db_session: AsyncSession):
 
     mock_ingest_output = AsyncMock(ingested=0, doc_ids=[])
     mock_ingest = AsyncMock(return_value=mock_ingest_output)
+    mock_propose = AsyncMock(
+        return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
+    )
 
     with patch(
         "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
+    ), patch(
+        "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
     ):
         result = await _run_news_cycle_async(
             run_id=run_id_str, _session=db_session
         )
 
-    assert result["early_exit"] == "no_new_docs"
+    assert result["early_exit"] == "low_confidence"
 
 
 # ---------------------------------------------------------------------------
@@ -68,9 +81,8 @@ def test_news_cycle_skips_when_lock_held():
     """run_news_cycle returns skipped=True when Redis lock is already held."""
     from apps.scheduler.jobs import run_news_cycle
 
-    with patch(
-        "apps.scheduler.jobs._acquire_singleton_lock", return_value=False
-    ):
+    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False), \
+         patch("apps.scheduler.jobs._acquire_singleton_lock", return_value=False):
         result = run_news_cycle(run_id=None, agent_name=None)
 
     assert result["skipped"] is True
@@ -85,6 +97,7 @@ def test_news_cycle_acquires_and_releases_lock():
     mock_release = MagicMock()
 
     with (
+        patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False),
         patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire),
         patch("apps.scheduler.jobs._release_singleton_lock", mock_release),
         patch(
@@ -107,6 +120,7 @@ def test_news_cycle_releases_lock_on_error():
     mock_release = MagicMock()
 
     with (
+        patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False),
         patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire),
         patch("apps.scheduler.jobs._release_singleton_lock", mock_release),
         patch(
@@ -124,9 +138,8 @@ def test_paper_trade_tick_skips_when_lock_held():
     """run_paper_trade_tick_all returns skipped=True when lock is held."""
     from apps.scheduler.jobs import run_paper_trade_tick_all
 
-    with patch(
-        "apps.scheduler.jobs._acquire_singleton_lock", return_value=False
-    ):
+    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False), \
+         patch("apps.scheduler.jobs._acquire_singleton_lock", return_value=False):
         result = run_paper_trade_tick_all()
 
     assert result["skipped"] is True
@@ -139,7 +152,8 @@ def test_news_cycle_lock_name_includes_agent():
 
     mock_acquire = MagicMock(return_value=False)
 
-    with patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire):
+    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False), \
+         patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire):
         run_news_cycle(run_id=None, agent_name="tech")
 
     mock_acquire.assert_called_once()

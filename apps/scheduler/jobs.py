@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
@@ -20,6 +21,14 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
+
+PAUSE_KEY = "scheduler:paused"
+
+
+def _is_scheduler_paused() -> bool:
+    """Check Redis for the global scheduler pause flag."""
+    r = _get_redis_client()
+    return bool(r.exists(PAUSE_KEY))
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +85,10 @@ def run_news_cycle(
         agent_name: Optional agent name from AGENT_CONFIGS. When provided,
             uses the agent's feeds, Qdrant collection, and strategy name.
     """
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping news_cycle")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
     settings = get_settings()
     lock_name = f"news_cycle:{agent_name or 'default'}"
     lock_ttl = settings.NEWS_POLL_INTERVAL_SECONDS * 2
@@ -156,6 +169,7 @@ async def _run_news_cycle_async(
     async def _execute(session: AsyncSession) -> dict:
         nonlocal details
         run = None
+        cycle_start = time.monotonic()
         try:
             # If a run_id was provided, look it up; otherwise create one
             if run_id:
@@ -165,6 +179,7 @@ async def _run_news_cycle_async(
                 await session.flush()
 
             # 1. Ingest latest news
+            t0 = time.monotonic()
             ingest_result = await ingest_latest_news(
                 session,
                 IngestInput(
@@ -174,59 +189,99 @@ async def _run_news_cycle_async(
             )
             details["ingested"] = ingest_result.ingested
             details["doc_ids"] = ingest_result.doc_ids
+            details["timing_ingest_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 1/8 ingest: %d docs in %.1fs",
+                ingest_result.ingested, details["timing_ingest_s"],
+            )
 
             if ingest_result.ingested == 0:
-                details["early_exit"] = "no_new_docs"
-                await run_repo.complete_run(session, run.id, status="ok", details=details)
-                await session.flush()
-                return details
+                logger.info("No new docs ingested — skipping embed/sentiment, proceeding to proposal")
+                details["skipped_embed_sentiment"] = True
+            else:
+                # 2. Embed and upsert (with agent-specific store if set)
+                t0 = time.monotonic()
+                embed_result = await embed_and_upsert_docs(
+                    session, EmbedInput(doc_ids=ingest_result.doc_ids), store=store
+                )
+                details["upserted_chunks"] = embed_result.upserted_chunks
+                details["timing_embed_s"] = round(time.monotonic() - t0, 2)
+                logger.info(
+                    "Step 2/8 embed: %d chunks in %.1fs",
+                    embed_result.upserted_chunks, details["timing_embed_s"],
+                )
 
-            # 2. Embed and upsert (with agent-specific store if set)
-            embed_result = await embed_and_upsert_docs(
-                session, EmbedInput(doc_ids=ingest_result.doc_ids), store=store
-            )
-            details["upserted_chunks"] = embed_result.upserted_chunks
-
-            # 3. Score sentiment
-            sentiment_result = await score_sentiment(
-                session, SentimentInput(doc_ids=ingest_result.doc_ids)
-            )
-            details["scored"] = sentiment_result.scored
+                # 3. Score sentiment
+                t0 = time.monotonic()
+                sentiment_result = await score_sentiment(
+                    session, SentimentInput(doc_ids=ingest_result.doc_ids)
+                )
+                details["scored"] = sentiment_result.scored
+                details["timing_sentiment_s"] = round(time.monotonic() - t0, 2)
+                logger.info(
+                    "Step 3/8 sentiment: %d scored in %.1fs",
+                    sentiment_result.scored, details["timing_sentiment_s"],
+                )
 
             # 4. Propose strategy update (with agent-specific store if set)
+            # Use a wider window (4 hours) so KB has enough context even
+            # when no new docs were ingested this cycle.
+            t0 = time.monotonic()
             proposal_result = await propose_strategy(
                 session,
                 ProposeStrategyInput(
                     strategy_name=strategy_name,
-                    recent_minutes=max(settings.NEWS_POLL_INTERVAL_SECONDS // 60, 2),
+                    recent_minutes=240,
                 ),
                 store=store,
             )
             proposal = proposal_result.proposal
             confidence = proposal.get("confidence", 0.0)
             details["confidence"] = confidence
+            details["timing_propose_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 4/8 propose: confidence=%.2f in %.1fs",
+                confidence, details["timing_propose_s"],
+            )
 
             if confidence < settings.STRATEGY_MIN_CONFIDENCE:
                 details["early_exit"] = "low_confidence"
+                details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)
+                logger.warning(
+                    "Pipeline exit: low_confidence (%.2f < %.2f) after %.1fs total",
+                    confidence, settings.STRATEGY_MIN_CONFIDENCE, details["timing_total_s"],
+                )
                 await run_repo.complete_run(session, run.id, status="ok", details=details)
                 await session.flush()
                 return details
 
             # 5. Validate strategy
+            t0 = time.monotonic()
             new_definition = proposal.get("new_definition", {})
             validation = await validate_strategy_tool(
                 ValidateStrategyInput(definition_json=new_definition)
             )
             details["valid"] = validation.valid
             details["validation_errors"] = validation.errors
+            details["timing_validate_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 5/8 validate: valid=%s in %.1fs",
+                validation.valid, details["timing_validate_s"],
+            )
 
             if not validation.valid:
                 details["early_exit"] = "validation_failed"
+                details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)
+                logger.warning(
+                    "Pipeline exit: validation_failed (%s) after %.1fs total",
+                    validation.errors, details["timing_total_s"],
+                )
                 await run_repo.complete_run(session, run.id, status="ok", details=details)
                 await session.flush()
                 return details
 
             # 6. Run backtest — in-sample
+            t0 = time.monotonic()
             backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
             end_date = datetime.now(timezone.utc).date()
             is_start = end_date - timedelta(days=int(backtest_days * 365 / 252))
@@ -239,8 +294,14 @@ async def _run_news_cycle_async(
                 ),
             )
             details["in_sample_passed"] = is_result.passed
+            details["timing_backtest_is_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 6/8 backtest IS: passed=%s in %.1fs",
+                is_result.passed, details["timing_backtest_is_s"],
+            )
 
             # 7. Run backtest — out-of-sample (90 days before in-sample)
+            t0 = time.monotonic()
             oos_end = is_start - timedelta(days=1)
             oos_start = oos_end - timedelta(days=90)
             oos_result = await run_backtest_tool(
@@ -252,9 +313,15 @@ async def _run_news_cycle_async(
                 ),
             )
             details["oos_passed"] = oos_result.passed
+            details["timing_backtest_oos_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 7/8 backtest OOS: passed=%s in %.1fs",
+                oos_result.passed, details["timing_backtest_oos_s"],
+            )
 
             # 8. Submit for approval if both pass
             if is_result.passed and oos_result.passed:
+                t0 = time.monotonic()
                 submit_result = await submit_strategy(
                     session,
                     SubmitStrategyInput(
@@ -268,14 +335,26 @@ async def _run_news_cycle_async(
                     ),
                 )
                 details["submitted_version_id"] = submit_result.strategy_version_id
+                details["timing_submit_s"] = round(time.monotonic() - t0, 2)
+                logger.info(
+                    "Step 8/8 submit: version_id=%s in %.1fs",
+                    submit_result.strategy_version_id, details["timing_submit_s"],
+                )
             else:
                 details["early_exit"] = "backtest_failed"
+                logger.warning(
+                    "Pipeline exit: backtest_failed (IS=%s, OOS=%s)",
+                    is_result.passed, oos_result.passed,
+                )
 
+            details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)
+            logger.info("News cycle completed in %.1fs", details["timing_total_s"])
             await run_repo.complete_run(session, run.id, status="ok", details=details)
             await session.flush()
 
         except Exception as exc:
-            logger.error("News cycle failed: %s", exc, exc_info=True)
+            details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)
+            logger.error("News cycle failed after %.1fs: %s", details["timing_total_s"], exc, exc_info=True)
             details["error"] = str(exc)
             if run:
                 await run_repo.complete_run(session, run.id, status="fail", details=details)
@@ -309,6 +388,10 @@ def run_paper_trade_tick_all(self) -> dict:
 
     Uses a Redis singleton lock to prevent overlapping ticks.
     """
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping paper_trade_tick")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
     lock_name = "paper_trade_tick"
     lock_ttl = 120
 
@@ -394,6 +477,10 @@ async def _run_paper_trade_tick_all_async(
 )
 def run_auto_approve(self) -> dict:
     """Auto-approve pending strategies older than PENDING_APPROVAL_AUTO_APPROVE_MINUTES."""
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping auto_approve")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
     settings = get_settings()
     if settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES <= 0:
         return {"skipped": True, "reason": "auto_approve_disabled"}
@@ -478,6 +565,10 @@ async def _run_auto_approve_async(
 )
 def run_expire_strategies(self) -> dict:
     """Archive active strategies that have exceeded STRATEGY_MAX_AGE_HOURS."""
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping expire_strategies")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
     settings = get_settings()
     if settings.STRATEGY_MAX_AGE_HOURS <= 0:
         return {"skipped": True, "reason": "expiry_disabled"}
@@ -555,6 +646,10 @@ async def _run_expire_strategies_async(
 )
 def run_news_cleanup(self) -> dict:
     """Delete news documents older than NEWS_RETENTION_DAYS from Postgres and Qdrant."""
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping news_cleanup")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
     settings = get_settings()
     if settings.NEWS_RETENTION_DAYS <= 0:
         return {"skipped": True, "reason": "news_cleanup_disabled"}

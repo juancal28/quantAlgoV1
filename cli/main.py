@@ -13,6 +13,7 @@ from cli.commands.dashboard import dashboard
 from cli.commands.news import news
 from cli.commands.pnl import pnl
 from cli.commands.runs import runs
+from cli.commands.scheduler import scheduler_app
 from cli.commands.status import status
 from cli.commands.strategies import strategies_app
 from cli.commands.upgrade import upgrade
@@ -29,6 +30,7 @@ app = typer.Typer(
 config_app = typer.Typer(help="CLI configuration.")
 app.add_typer(completion_app, name="completion")
 app.add_typer(config_app, name="config")
+app.add_typer(scheduler_app, name="scheduler")
 app.add_typer(strategies_app, name="strategies")
 
 # Top-level commands
@@ -58,6 +60,9 @@ def help() -> None:
         ("quant strategies list [-s STATUS]", "List strategies (filter: active, pending_approval, archived)"),
         ("quant strategies approve NAME ID", "Approve a pending strategy version (with confirmation)"),
         ("quant strategies deactivate NAME", "Deactivate (archive) the active version of a strategy"),
+        ("quant scheduler pause", "Pause ALL automated tasks (zero API/LLM spend)"),
+        ("quant scheduler resume", "Resume automated tasks"),
+        ("quant scheduler status", "Check if scheduler is paused or running"),
         ("quant runs [-n LIMIT]", "Recent pipeline runs (ingest, backtest, etc.)"),
         ("quant pnl STRATEGY [-d DAYS]", "Daily PnL snapshots with sparkline"),
         ("quant cycle", "Trigger a manual news cycle"),
@@ -84,6 +89,8 @@ def help() -> None:
     examples.add_row("See news from the last hour", "quant news -m 60")
     examples.add_row("Find strategies waiting for approval", "quant strategies list -s pending_approval")
     examples.add_row("Approve a strategy", "quant strategies approve sentiment_v1 <version-id>")
+    examples.add_row("Stop all automated spending", "quant scheduler pause")
+    examples.add_row("Resume automated tasks", "quant scheduler resume")
     examples.add_row("Trigger a full pipeline run", "quant cycle")
     examples.add_row("Watch everything in real time", "quant dashboard -i 10")
     examples.add_row("Check PnL for last 7 days", "quant pnl sentiment_v1 -d 7")
