@@ -180,7 +180,7 @@ class TestMetrics:
 
     def test_passes_thresholds_bad_drawdown(self):
         m = BacktestMetrics(
-            cagr=0.15, sharpe=1.5, max_drawdown=0.30,
+            cagr=0.15, sharpe=1.5, max_drawdown=0.40,
             win_rate=0.60, turnover=0.01, avg_trade_return=0.005,
         )
         assert passes_thresholds(m) is False
@@ -188,7 +188,7 @@ class TestMetrics:
     def test_passes_thresholds_bad_win_rate(self):
         m = BacktestMetrics(
             cagr=0.15, sharpe=1.5, max_drawdown=0.10,
-            win_rate=0.30, turnover=0.01, avg_trade_return=0.005,
+            win_rate=0.25, turnover=0.01, avg_trade_return=0.005,
         )
         assert passes_thresholds(m) is False
 

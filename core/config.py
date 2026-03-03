@@ -89,10 +89,10 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "claude-sonnet-4-6"
 
     # Strategy Agent
-    STRATEGY_MIN_CONFIDENCE: float = 0.6
+    STRATEGY_MIN_CONFIDENCE: float = 0.3
     STRATEGY_MAX_DIFF_FIELDS: int = 3
     STRATEGY_MAX_ACTIVATIONS_PER_DAY: int = 4
-    STRATEGY_MIN_BACKTEST_DAYS: int = 252
+    STRATEGY_MIN_BACKTEST_DAYS: int = 60
     STRATEGY_APPROVED_UNIVERSE: str = "SPY,QQQ,AAPL,MSFT,AMZN,GOOGL,META,NVDA,BRK.B,JPM"
     PENDING_APPROVAL_AUTO_APPROVE_MINUTES: int = 5
     STRATEGY_MAX_AGE_HOURS: int = 0  # 0 = disabled; non-zero = auto-archive after N hours
@@ -106,9 +106,9 @@ class Settings(BaseSettings):
     BACKTEST_SPREAD_BPS: float = Field(default=2.0)
 
     # Backtest activation thresholds
-    BACKTEST_MIN_SHARPE: float = Field(default=0.5)
-    BACKTEST_MAX_DRAWDOWN: float = Field(default=0.25)
-    BACKTEST_MIN_WIN_RATE: float = Field(default=0.40)
+    BACKTEST_MIN_SHARPE: float = Field(default=0.3)
+    BACKTEST_MAX_DRAWDOWN: float = Field(default=0.35)
+    BACKTEST_MIN_WIN_RATE: float = Field(default=0.30)
 
     # Multi-agent
     AGENT_CONFIGS: str = "[]"

@@ -246,18 +246,24 @@ class TestNewsCycleAgentDispatch:
         mock_settings("AGENT_CONFIGS", "[]")
         from unittest.mock import AsyncMock, patch
 
-        from apps.mcp_server.schemas import IngestOutput
+        from apps.mcp_server.schemas import IngestOutput, ProposeStrategyOutput
         from apps.scheduler.jobs import _run_news_cycle_async
 
         mock_ingest = AsyncMock(
             return_value=IngestOutput(ingested=0, doc_ids=[])
         )
+        mock_propose = AsyncMock(
+            return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
+        )
         with patch(
             "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
+        ), patch(
+            "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
         ):
             result = await _run_news_cycle_async(_session=db_session)
 
-        assert result["early_exit"] == "no_new_docs"
+        assert result.get("skipped_embed_sentiment") is True
+        assert result["early_exit"] == "low_confidence"
         # feed_urls should be None (global default)
         call_args = mock_ingest.call_args
         ingest_input = call_args[0][1]
@@ -278,21 +284,27 @@ class TestNewsCycleAgentDispatch:
         mock_settings("AGENT_CONFIGS", json.dumps(configs))
         from unittest.mock import AsyncMock, patch
 
-        from apps.mcp_server.schemas import IngestOutput
+        from apps.mcp_server.schemas import IngestOutput, ProposeStrategyOutput
         from apps.scheduler.jobs import _run_news_cycle_async
 
         mock_ingest = AsyncMock(
             return_value=IngestOutput(ingested=0, doc_ids=[])
         )
+        mock_propose = AsyncMock(
+            return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
+        )
         with patch(
             "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
+        ), patch(
+            "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
         ):
             result = await _run_news_cycle_async(
                 _session=db_session, agent_name="tech"
             )
 
         assert result["agent_name"] == "tech"
-        assert result["early_exit"] == "no_new_docs"
+        assert result.get("skipped_embed_sentiment") is True
+        assert result["early_exit"] == "low_confidence"
         # feed_urls should contain the agent's parsed feed URL
         call_args = mock_ingest.call_args
         ingest_input = call_args[0][1]

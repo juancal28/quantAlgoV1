@@ -58,11 +58,14 @@ async def _create_pending_version(
 @pytest.mark.asyncio
 async def test_auto_approve_disabled_when_zero(mock_settings):
     """When PENDING_APPROVAL_AUTO_APPROVE_MINUTES=0, task returns skipped."""
+    from unittest.mock import patch
+
     mock_settings("PENDING_APPROVAL_AUTO_APPROVE_MINUTES", "0")
 
     from apps.scheduler.jobs import run_auto_approve
 
-    result = run_auto_approve()
+    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False):
+        result = run_auto_approve()
     assert result["skipped"] is True
     assert result["reason"] == "auto_approve_disabled"
 
