@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.storage.models import NewsDocument
@@ -73,3 +73,32 @@ async def get_recent(
     )
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def get_old_documents(
+    session: AsyncSession,
+    days: int,
+    limit: int = 500,
+) -> list[NewsDocument]:
+    """Return documents older than *days* days, ordered oldest first."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    stmt = (
+        select(NewsDocument)
+        .where(NewsDocument.fetched_at < cutoff)
+        .order_by(NewsDocument.fetched_at.asc())
+        .limit(limit)
+    )
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def delete_by_ids(
+    session: AsyncSession,
+    doc_ids: list[uuid.UUID],
+) -> int:
+    """Bulk delete news documents by primary key. Returns count deleted."""
+    if not doc_ids:
+        return 0
+    stmt = delete(NewsDocument).where(NewsDocument.id.in_(doc_ids))
+    result = await session.execute(stmt)
+    return result.rowcount

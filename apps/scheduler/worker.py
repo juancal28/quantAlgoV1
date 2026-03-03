@@ -47,6 +47,13 @@ def _build_beat_schedule(settings) -> dict:
             "schedule": 3600.0,
         }
 
+    # Clean up old news documents (only when configured)
+    if settings.NEWS_RETENTION_DAYS > 0:
+        schedule["news-cleanup-periodic"] = {
+            "task": "apps.scheduler.jobs.run_news_cleanup",
+            "schedule": 21600.0,  # every 6 hours
+        }
+
     return schedule
 
 

@@ -539,3 +539,84 @@ async def _run_expire_strategies_async(
         return result
 
     return {"archived": archived, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# News cleanup task
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=300,
+    name="apps.scheduler.jobs.run_news_cleanup",
+)
+def run_news_cleanup(self) -> dict:
+    """Delete news documents older than NEWS_RETENTION_DAYS from Postgres and Qdrant."""
+    settings = get_settings()
+    if settings.NEWS_RETENTION_DAYS <= 0:
+        return {"skipped": True, "reason": "news_cleanup_disabled"}
+    return asyncio.run(_run_news_cleanup_async())
+
+
+async def _run_news_cleanup_async(
+    _session: "AsyncSession | None" = None,
+) -> dict:
+    """Async implementation: delete old news documents from Postgres and Qdrant."""
+    from core.kb.vectorstore import get_vectorstore
+    from core.storage.repos import news_repo
+
+    settings = get_settings()
+    retention_days = settings.NEWS_RETENTION_DAYS
+
+    total_deleted = 0
+    total_qdrant_deleted = 0
+    errors: list[str] = []
+
+    async def _execute(session: "AsyncSession") -> dict:
+        nonlocal total_deleted, total_qdrant_deleted
+
+        while True:
+            old_docs = await news_repo.get_old_documents(
+                session, days=retention_days, limit=500
+            )
+            if not old_docs:
+                break
+
+            doc_ids = [d.id for d in old_docs]
+            doc_id_strs = [str(d.id) for d in old_docs]
+
+            # Delete from Qdrant first (best effort)
+            try:
+                store = get_vectorstore(
+                    collection_name=settings.VECTOR_COLLECTION
+                )
+                qdrant_deleted = await store.delete_by_doc_ids(doc_id_strs)
+                total_qdrant_deleted += qdrant_deleted
+            except Exception as exc:
+                errors.append(f"qdrant_delete: {exc}")
+                logger.warning("Qdrant delete failed: %s", exc)
+
+            # Delete from Postgres
+            deleted = await news_repo.delete_by_ids(session, doc_ids)
+            total_deleted += deleted
+
+        return {
+            "deleted": total_deleted,
+            "qdrant_deleted": total_qdrant_deleted,
+            "errors": errors,
+        }
+
+    if _session is not None:
+        return await _execute(_session)
+
+    from core.storage.db import get_session
+
+    async for session in get_session():
+        result = await _execute(session)
+        await session.commit()
+        return result
+
+    return {"deleted": 0, "qdrant_deleted": 0, "errors": errors}

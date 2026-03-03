@@ -36,6 +36,10 @@ class VectorStoreBase(abc.ABC):
     ) -> list[dict[str, Any]]:
         """Query the collection. Returns list of {id, score, payload}."""
 
+    @abc.abstractmethod
+    async def delete_by_doc_ids(self, doc_ids: list[str]) -> int:
+        """Delete all points whose payload ``doc_id`` is in *doc_ids*. Returns count deleted."""
+
 
 class QdrantVectorStore(VectorStoreBase):
     """Qdrant-backed vector store using the async client."""
@@ -126,6 +130,32 @@ class QdrantVectorStore(VectorStoreBase):
         ]
 
 
+    async def delete_by_doc_ids(self, doc_ids: list[str]) -> int:
+        """Delete all points whose payload ``doc_id`` matches any of *doc_ids*."""
+        if not doc_ids:
+            return 0
+        from qdrant_client.models import (
+            FieldCondition,
+            Filter,
+            MatchAny,
+            PointsSelector,
+            FilterSelector,
+        )
+
+        await self._client.delete(
+            collection_name=self._collection,
+            points_selector=FilterSelector(
+                filter=Filter(
+                    must=[
+                        FieldCondition(key="doc_id", match=MatchAny(any=doc_ids))
+                    ]
+                )
+            ),
+        )
+        # Qdrant delete doesn't return a count; return len(doc_ids) as upper bound
+        return len(doc_ids)
+
+
 class FAISSMockVectorStore(VectorStoreBase):
     """In-memory FAISS-backed vector store for testing.
 
@@ -192,6 +222,41 @@ class FAISSMockVectorStore(VectorStoreBase):
                 "payload": payload,
             })
         return results
+
+
+    async def delete_by_doc_ids(self, doc_ids: list[str]) -> int:
+        """Remove all vectors whose payload ``doc_id`` is in *doc_ids*."""
+        if not doc_ids:
+            return 0
+        import faiss
+
+        target_set = set(doc_ids)
+        keep_indices = [
+            i
+            for i, p in enumerate(self._payloads)
+            if p.get("doc_id") not in target_set
+        ]
+        deleted = len(self._payloads) - len(keep_indices)
+
+        if deleted == 0:
+            return 0
+
+        # Rebuild index from kept vectors
+        if keep_indices:
+            kept_vectors = np.array(
+                [self._index.reconstruct(int(i)) for i in keep_indices],
+                dtype=np.float32,
+            )
+            self._ids = [self._ids[i] for i in keep_indices]
+            self._payloads = [self._payloads[i] for i in keep_indices]
+            self._index = faiss.IndexFlatIP(self._vector_size)
+            self._index.add(kept_vectors)
+        else:
+            self._ids = []
+            self._payloads = []
+            self._index = faiss.IndexFlatIP(self._vector_size)
+
+        return deleted
 
 
 def get_vectorstore(
