@@ -18,15 +18,16 @@
 10. [Safety Rails & Risk Controls](#10-safety-rails--risk-controls)
 11. [API Reference](#11-api-reference)
 12. [MCP Server](#12-mcp-server)
-13. [Day-to-Day Usage](#13-day-to-day-usage)
-14. [Database Schema](#14-database-schema)
-15. [Project File Map](#15-project-file-map)
-16. [Running Tests](#16-running-tests)
-17. [Monitoring with Claude Desktop](#17-monitoring-with-claude-desktop)
-18. [Future Phases: Quantitative Model Development](#18-future-phases-quantitative-model-development)
-19. [Deployment Roadmap](#19-deployment-roadmap)
-20. [Known Limitations](#20-known-limitations)
-21. [Glossary](#21-glossary)
+13. [Terminal CLI](#13-terminal-cli)
+14. [Day-to-Day Usage](#14-day-to-day-usage)
+15. [Database Schema](#15-database-schema)
+16. [Project File Map](#16-project-file-map)
+17. [Running Tests](#17-running-tests)
+18. [Monitoring with Claude Desktop](#18-monitoring-with-claude-desktop)
+19. [Future Phases: Quantitative Model Development](#19-future-phases-quantitative-model-development)
+20. [Deployment Roadmap](#20-deployment-roadmap)
+21. [Known Limitations](#21-known-limitations)
+22. [Glossary](#22-glossary)
 
 ---
 
@@ -277,10 +278,11 @@ All configuration is managed through environment variables loaded from a `.env` 
 
 | Variable | Default | Description |
 |---|---|---|
-| `NEWS_POLL_INTERVAL_SECONDS` | `120` | How often to check for new articles (seconds) |
-| `NEWS_SOURCES` | Yahoo Finance RSS | Comma-separated list of `type:url` sources |
+| `NEWS_POLL_INTERVAL_SECONDS` | `60` | How often to check for new articles (seconds) |
+| `NEWS_SOURCES` | Google News + CNBC RSS | Comma-separated list of `type:url` sources |
 | `MAX_DOCS_PER_POLL` | `50` | Max articles to fetch per polling cycle |
 | `DEDUP_CONTENT_HASH` | `sha256` | Hashing algorithm for deduplication |
+| `NEWS_RETENTION_DAYS` | `3` | Auto-delete news older than N days (0 = disabled) |
 
 ### Market Data
 
@@ -338,7 +340,8 @@ All configuration is managed through environment variables loaded from a `.env` 
 | `STRATEGY_MAX_DIFF_FIELDS` | `3` | Max fields the agent can change per proposal |
 | `STRATEGY_MAX_ACTIVATIONS_PER_DAY` | `4` | Max strategy activations in a 24-hour window |
 | `STRATEGY_MIN_BACKTEST_DAYS` | `252` | Minimum backtest window (252 trading days ~ 1 year) |
-| `PENDING_APPROVAL_AUTO_APPROVE_MINUTES` | `0` | 0 = never auto-approve; N = auto-approve after N minutes |
+| `PENDING_APPROVAL_AUTO_APPROVE_MINUTES` | `5` | Auto-approve pending strategies after N minutes (0 = disabled) |
+| `STRATEGY_MAX_AGE_HOURS` | `0` | Auto-archive active strategies after N hours (0 = disabled) |
 
 ### Multi-Agent
 
@@ -437,7 +440,7 @@ Market data is fetched:
 
 ### The Ingestion Pipeline
 
-Every `NEWS_POLL_INTERVAL_SECONDS` (default: 2 minutes), the system runs:
+Every `NEWS_POLL_INTERVAL_SECONDS` (default: 60 seconds), the system runs:
 
 ```
 Step 1: FETCH
@@ -805,6 +808,7 @@ All endpoints are served by FastAPI at `http://localhost:8000` (default).
 | `GET` | `/strategies/{name}/active` | Get the currently active version of a strategy |
 | `GET` | `/strategies/{name}/versions` | List all versions of a strategy |
 | `POST` | `/strategies/{name}/approve/{version_id}` | **Approve and activate** a pending strategy version |
+| `POST` | `/strategies/{name}/deactivate` | **Deactivate (archive)** the active version of a strategy |
 | `POST` | `/strategies/{name}/backtest` | Manually trigger a backtest for a strategy |
 
 ### PnL
@@ -851,7 +855,95 @@ The system exposes an MCP (Model Context Protocol) tool server for programmatic 
 
 ---
 
-## 13. Day-to-Day Usage
+## 13. Terminal CLI
+
+The `quant` CLI is a Typer-based command-line interface for operating the trading system remotely. It communicates with the Railway-deployed API over HTTP.
+
+### Installation & Configuration
+
+The CLI is installed automatically with the package (`pip install -e ".[dev]"`). Point it at your Railway API:
+
+```bash
+quant config set-url https://your-app.up.railway.app
+```
+
+The URL is persisted in `~/.quant/config.json`. You can also set the `QUANT_API_URL` environment variable (overrides the config file).
+
+### Commands
+
+| Command | Description |
+|---|---|
+| `quant help` | Show all commands, usage examples, and current configuration |
+| `quant status` | System health: trading mode, market status, services, strategy counts |
+| `quant news [-m MINS] [-n LIMIT] [--ingested]` | Recent news articles with sentiment scores |
+| `quant strategies list [-s STATUS]` | List strategies (filter: `active`, `pending_approval`, `archived`) |
+| `quant strategies approve NAME ID` | Approve a pending strategy version (with confirmation prompt) |
+| `quant strategies deactivate NAME` | Deactivate (archive) the active version of a strategy |
+| `quant runs [-n LIMIT]` | Recent pipeline runs with details |
+| `quant pnl STRATEGY [-d DAYS]` | Daily PnL snapshots with sparkline visualization |
+| `quant cycle` | Trigger a manual news cycle |
+| `quant dashboard [-i SECS]` | Live auto-refreshing dashboard (default: 15s, Ctrl+C to exit) |
+| `quant upgrade` | Pull latest changes from git and reinstall the package |
+| `quant config set-url URL` | Save the Railway API URL |
+| `quant completion install [-s SHELL]` | Install tab-completion (bash/zsh/powershell, auto-detects) |
+| `quant completion show [-s SHELL]` | Print completion script to stdout |
+| `quant completion uninstall [-s SHELL]` | Remove tab-completion |
+
+### Dashboard
+
+The dashboard (`quant dashboard`) renders a live, auto-refreshing terminal UI with five panels:
+
+- **Status** — Trading mode, market open/closed, news count, last ingest timestamp, service health
+- **Recent News** — Last 5 articles with sentiment scores and extracted tickers
+- **Recent Runs** — Last 5 pipeline runs with type, status, and formatted timestamps (Pacific Time)
+- **Strategies** — All strategies with version number and status
+- **PnL Summary** — Realized/unrealized PnL with sparklines for up to 3 active strategies
+
+### Tab Completion
+
+Shell tab-completion is supported for bash, zsh, and PowerShell. Install with:
+
+```bash
+quant completion install        # auto-detects your shell
+quant completion install -s all # install for all shells
+```
+
+Completion scripts are generated by introspecting the Typer app, so they stay in sync with the actual commands. Uninstall with `quant completion uninstall`.
+
+### Examples
+
+```bash
+# Connect to your Railway API
+quant config set-url https://api.up.railway.app
+
+# Check system health
+quant status
+
+# See news from the last hour
+quant news -m 60
+
+# Find strategies waiting for approval
+quant strategies list -s pending_approval
+
+# Approve a strategy
+quant strategies approve sentiment_v1 <version-id>
+
+# Deactivate an active strategy
+quant strategies deactivate sentiment_v1
+
+# Trigger a full pipeline run
+quant cycle
+
+# Watch everything in real time
+quant dashboard -i 10
+
+# Check PnL for last 7 days
+quant pnl sentiment_v1 -d 7
+```
+
+---
+
+## 14. Day-to-Day Usage
 
 ### Starting the System
 
@@ -878,50 +970,76 @@ celery -A apps.scheduler.worker beat --loglevel=info
 
 ### What Happens Automatically
 
-Once running, the system operates on two loops:
+Once running, the system operates on several automated loops managed by Celery Beat. Each task uses a **Redis singleton lock** to prevent overlapping executions.
 
-1. **News cycle** (every 2 minutes):
-   - Fetches new articles
-   - Embeds and scores them
+1. **News cycle** (every `NEWS_POLL_INTERVAL_SECONDS`, default 60s):
+   - Fetches new articles from configured RSS feeds
+   - Embeds and scores them for sentiment
    - RAG agent may propose a strategy update
-   - If valid + backtested -> submitted for your approval
+   - If valid + backtested -> submitted for approval
+   - Lock: `news_cycle:{agent_name}` (TTL: 2x poll interval)
 
 2. **Paper trade tick** (every 1 minute, market hours only):
    - Evaluates active strategy signals
    - Executes simulated trades
-   - Records PnL
-   - Checks circuit breaker
+   - Records PnL and checks circuit breaker
+   - Lock: `paper_trade_tick` (TTL: 120s)
+
+3. **Auto-approve** (every 60s, if `PENDING_APPROVAL_AUTO_APPROVE_MINUTES > 0`):
+   - Finds pending strategies older than the configured threshold
+   - Approves them automatically (`approved_by="auto"`)
+
+4. **Strategy expiry** (every 1 hour, if `STRATEGY_MAX_AGE_HOURS > 0`):
+   - Archives active strategies that exceed the max age
+   - Logged in the audit trail with `trigger="scheduler"`
+
+5. **News cleanup** (every 6 hours, if `NEWS_RETENTION_DAYS > 0`):
+   - Deletes news documents older than the retention period
+   - Removes corresponding vectors from Qdrant
+   - Batches deletions (500 docs at a time)
 
 ### Your Role as Operator
 
-1. **Check for pending strategies:**
+Use the `quant` CLI (see [Terminal CLI](#13-terminal-cli)) or the raw API:
+
+1. **Check system health:**
    ```bash
-   curl http://localhost:8000/strategies
+   quant status
    ```
 
-2. **Review a proposal** — look at the rationale, cited articles, and backtest metrics
-
-3. **Approve or ignore:**
+2. **Check for pending strategies:**
    ```bash
-   # Approve
-   curl -X POST http://localhost:8000/strategies/sentiment_momentum_v1/approve/{version_id}
-
-   # To reject, simply don't approve — it stays as pending_approval
+   quant strategies list -s pending_approval
    ```
 
-4. **Monitor performance:**
+3. **Review and approve:**
    ```bash
-   curl http://localhost:8000/pnl/daily?strategy=sentiment_momentum_v1
+   quant strategies approve sentiment_momentum_v1 <version-id>
    ```
 
-5. **Check pipeline health:**
+4. **Deactivate a strategy:**
    ```bash
-   curl http://localhost:8000/runs/recent
+   quant strategies deactivate sentiment_momentum_v1
+   ```
+
+5. **Monitor everything in real time:**
+   ```bash
+   quant dashboard
+   ```
+
+6. **Check PnL:**
+   ```bash
+   quant pnl sentiment_momentum_v1 -d 7
+   ```
+
+7. **Trigger a manual pipeline run:**
+   ```bash
+   quant cycle
    ```
 
 ---
 
-## 14. Database Schema
+## 15. Database Schema
 
 Six tables in Postgres, all defined in `core/storage/models.py`:
 
@@ -1021,7 +1139,7 @@ Log of every pipeline execution for observability.
 
 ---
 
-## 15. Project File Map
+## 16. Project File Map
 
 ```
 quantAlgoV1/
@@ -1037,6 +1155,28 @@ quantAlgoV1/
 |-- railway.toml                       # Railway deployment config
 |-- entrypoint.sh                      # Container entrypoint (Alembic migration + exec)
 |-- .dockerignore                      # Excludes .venv, tests, .git from Docker context
+|
+|-- cli/                               # TERMINAL CLI (Typer + Rich)
+|   |-- main.py                        # App entry point, top-level commands, help
+|   |-- client.py                      # HTTP client wrapper (get/post to API)
+|   |-- config.py                      # API URL persistence (~/.quant/config.json)
+|   |-- commands/
+|   |   |-- completion.py              # Tab-completion install/show/uninstall
+|   |   |-- cycle.py                   # Manual news cycle trigger
+|   |   |-- dashboard.py               # Live auto-refreshing dashboard
+|   |   |-- news.py                    # Recent news articles
+|   |   |-- pnl.py                     # PnL snapshots with sparklines
+|   |   |-- runs.py                    # Pipeline run history
+|   |   |-- status.py                  # System health check
+|   |   |-- strategies.py              # List, approve, deactivate strategies
+|   |   +-- upgrade.py                 # Git pull + reinstall
+|   +-- views/
+|       |-- dashboard_view.py          # Composite dashboard layout (Table.grid)
+|       |-- news_view.py               # News table with sentiment coloring
+|       |-- pnl_view.py                # PnL table with sparklines
+|       |-- runs_view.py               # Runs table with timestamp formatting
+|       |-- status_view.py             # Status key-value panel
+|       +-- strategies_view.py         # Strategies table with status coloring
 |
 |-- alembic/
 |   |-- env.py                         # Async migration runner
@@ -1175,7 +1315,7 @@ quantAlgoV1/
 |       |-- worker.py                 # Celery worker config + beat schedule
 |       +-- jobs.py                   # Scheduled pipeline jobs
 |
-+-- tests/                            # 215 tests across 25 test files
++-- tests/                            # 257 tests across 25+ test files
     |-- conftest.py                   # Fixtures (SQLite, mock config)
     |-- test_smoke.py                 # Import + config smoke tests
     |-- test_dedupe.py                # Deduplication logic
@@ -1204,15 +1344,15 @@ quantAlgoV1/
 
 ---
 
-## 16. Running Tests
+## 17. Running Tests
 
-215 tests across 25 test files. All tests run with mocks — no external services required:
+257 tests across 25+ test files. All tests run with mocks — no external services required:
 
 ```bash
 pytest
 ```
 
-This includes 24 C++/Python parity tests (`test_cpp_parity.py`) that verify the `_quant_core` extension produces identical results to the original Python implementations for cost model, metrics, paper broker, risk checks, position sizing, signal reconciliation, and backtesting.
+This includes C++/Python parity tests (`test_cpp_parity.py`) that verify the `_quant_core` extension produces identical results to the original Python implementations for cost model, metrics, paper broker, risk checks, position sizing, signal reconciliation, and backtesting.
 
 With coverage:
 
@@ -1222,7 +1362,7 @@ pytest --cov=core --cov=apps
 
 ---
 
-## 17. Monitoring with Claude Desktop
+## 18. Monitoring with Claude Desktop
 
 This system can be monitored conversationally using Claude Desktop with two MCP servers running side by side:
 
@@ -1270,7 +1410,7 @@ The Alpaca server's trading tools bypass our safety rails (PAPER_GUARD, strategy
 
 ---
 
-## 18. Future Phases: Quantitative Model Development
+## 19. Future Phases: Quantitative Model Development
 
 The v1 system has solid engineering infrastructure but limited mathematical depth. The following phases add the quantitative rigor expected at professional quant firms. Each phase builds on the previous one — implement in order.
 
@@ -1454,7 +1594,7 @@ Phase 20 (Pairs Trading) <- independent, benefits from Phases 15-17
 
 ---
 
-## 19. Deployment Roadmap
+## 20. Deployment Roadmap
 
 ### Stage 1: Local Development & Testing (Current)
 
@@ -1530,7 +1670,7 @@ Each strategy pod runs the same codebase with different environment variables (d
 
 ---
 
-## 20. Known Limitations
+## 21. Known Limitations
 
 - Survivorship bias is not corrected in the backtester (ETF-only universe is a partial mitigation).
 - Near-duplicate detection (SimHash) is not implemented; only exact content hash dedup is used.
@@ -1542,7 +1682,7 @@ Each strategy pod runs the same codebase with different environment variables (d
 
 ---
 
-## 21. Glossary
+## 22. Glossary
 
 | Term | Definition |
 |---|---|
