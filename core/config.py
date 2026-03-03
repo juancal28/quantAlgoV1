@@ -97,6 +97,9 @@ class Settings(BaseSettings):
     PENDING_APPROVAL_AUTO_APPROVE_MINUTES: int = 5
     STRATEGY_MAX_AGE_HOURS: int = 0  # 0 = disabled; non-zero = auto-archive after N hours
 
+    # ML cache (Railway volume mount point for torch/transformers/FinBERT)
+    ML_CACHE_DIR: str = "/data/ml-cache"
+
     # Celery
     CELERY_WORKER_CONCURRENCY: int = 2
 

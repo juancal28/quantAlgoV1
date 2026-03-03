@@ -715,3 +715,81 @@ async def _run_news_cleanup_async(
         return result
 
     return {"deleted": 0, "qdrant_deleted": 0, "errors": errors}
+
+
+# ---------------------------------------------------------------------------
+# ML dependency update task
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=2,
+    retry_backoff=True,
+    retry_backoff_max=600,
+    name="apps.scheduler.jobs.run_ml_deps_update",
+)
+def run_ml_deps_update(self) -> dict:
+    """Check for and install ML dependency updates on the persistent volume.
+
+    Runs daily. Updates torch, transformers, and the FinBERT model if newer
+    versions are available. Packages are installed to ML_CACHE_DIR/packages/
+    so the update is picked up on next service restart.
+    """
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping ml_deps_update")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
+    settings = get_settings()
+    if settings.SENTIMENT_PROVIDER.lower() != "finbert":
+        return {"skipped": True, "reason": "sentiment_provider_not_finbert"}
+
+    import os
+    import subprocess
+    import sys
+
+    ml_cache_dir = settings.ML_CACHE_DIR
+    packages_dir = os.path.join(ml_cache_dir, "packages")
+    hf_cache_dir = os.path.join(ml_cache_dir, "huggingface")
+
+    if not os.path.isdir(packages_dir):
+        logger.warning("ML packages dir %s not found — skipping update", packages_dir)
+        return {"skipped": True, "reason": "packages_dir_missing"}
+
+    results: dict = {"updated": [], "errors": []}
+
+    # Update torch + transformers (pip only downloads if newer version exists)
+    for pkg, extra_args in [
+        ("torch", ["--index-url", "https://download.pytorch.org/whl/cpu"]),
+        ("transformers", []),
+    ]:
+        try:
+            cmd = [
+                sys.executable, "-m", "pip", "install", "--upgrade",
+                "--target", packages_dir, pkg,
+            ] + extra_args
+            output = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+            if "already satisfied" not in output.lower():
+                results["updated"].append(pkg)
+                logger.info("Updated %s on volume", pkg)
+            else:
+                logger.info("%s already up to date", pkg)
+        except subprocess.CalledProcessError as exc:
+            results["errors"].append(f"{pkg}: {exc.output[:200]}")
+            logger.warning("Failed to update %s: %s", pkg, exc.output[:200])
+
+    # Re-download FinBERT model (HuggingFace checks revision, no-ops if current)
+    try:
+        os.environ["HF_HOME"] = hf_cache_dir
+        if packages_dir not in sys.path:
+            sys.path.insert(0, packages_dir)
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+        AutoTokenizer.from_pretrained("ProsusAI/finbert")
+        AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+        logger.info("FinBERT model cache verified/updated")
+    except Exception as exc:
+        results["errors"].append(f"finbert: {exc}")
+        logger.warning("Failed to update FinBERT model: %s", exc)
+
+    return results

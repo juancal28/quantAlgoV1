@@ -1,7 +1,22 @@
 #!/bin/sh
 set -e
 
+# ---------------------------------------------------------------------------
+# ML dependencies: install torch/transformers/FinBERT to persistent volume
+# On first boot this takes ~3-4 min; subsequent boots check in ~1s.
+# ---------------------------------------------------------------------------
+ML_CACHE_DIR="${ML_CACHE_DIR:-/data/ml-cache}"
+
+if [ "$SENTIMENT_PROVIDER" = "finbert" ] || [ -z "$SENTIMENT_PROVIDER" ]; then
+    export PYTHONPATH="${ML_CACHE_DIR}/packages:${PYTHONPATH:-}"
+    export HF_HOME="${ML_CACHE_DIR}/huggingface"
+    export TRANSFORMERS_CACHE="${ML_CACHE_DIR}/huggingface/hub"
+    python scripts/ensure_ml_deps.py
+fi
+
+# ---------------------------------------------------------------------------
 # Run Alembic migrations with retry (only when RUN_MIGRATIONS=true)
+# ---------------------------------------------------------------------------
 if [ "$RUN_MIGRATIONS" = "true" ]; then
     for i in 1 2 3 4 5; do
         alembic upgrade head && break

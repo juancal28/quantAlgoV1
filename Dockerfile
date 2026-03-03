@@ -8,31 +8,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Build arg: set to "mock" to skip torch/FinBERT (~1GB savings, ~3min faster)
-#   railway variables --set SENTIMENT_PROVIDER=mock  (or finbert)
-#   Then in railway.toml: [build] -> dockerfileBuildArgs
-ARG SENTIMENT_PROVIDER=finbert
-
 # Layer 1: Build tools — almost never changes
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install scikit-build-core pybind11 cmake ninja
 
-# Layer 2: CPU-only PyTorch + transformers — ONLY when FinBERT is needed
-# Skipping this saves ~500MB download + install time
-RUN --mount=type=cache,target=/root/.cache/pip \
-    if [ "$SENTIMENT_PROVIDER" = "finbert" ]; then \
-        pip install torch --index-url https://download.pytorch.org/whl/cpu && \
-        pip install transformers; \
-    fi
-
-# Layer 3: Pre-download FinBERT model — ONLY when needed (~500MB)
-RUN if [ "$SENTIMENT_PROVIDER" = "finbert" ]; then \
-        python -c "from transformers import AutoModelForSequenceClassification, AutoTokenizer; \
-            AutoTokenizer.from_pretrained('ProsusAI/finbert'); \
-            AutoModelForSequenceClassification.from_pretrained('ProsusAI/finbert')"; \
-    fi
-
-# Layer 4: App dependencies — cached until pyproject.toml changes
+# Layer 2: App dependencies — cached until pyproject.toml changes
+# NOTE: torch/transformers/FinBERT are NOT installed here. They live on
+# a Railway persistent volume and are set up at runtime by entrypoint.sh.
 COPY pyproject.toml ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     python -c "\
@@ -42,8 +24,7 @@ deps = t['project']['dependencies']; \
 pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps))" \
     && pip install -r /tmp/requirements.txt
 
-# Layer 5: Build C++ extension via cmake directly — only rebuilds when cpp/ changes
-# Decoupled from Python source so Python-only changes skip this layer entirely
+# Layer 3: Build C++ extension via cmake — only rebuilds when cpp/ changes
 COPY cpp/ ./cpp/
 RUN cmake -S cpp -B cpp/build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
@@ -64,10 +45,7 @@ WORKDIR /app
 COPY --from=builder /usr/local/lib/python3.11/site-packages/ /usr/local/lib/python3.11/site-packages/
 COPY --from=builder /usr/local/bin/ /usr/local/bin/
 
-# Copy HuggingFace model cache (empty dir if SENTIMENT_PROVIDER=mock)
-COPY --from=builder /root/.cache/huggingface/ /root/.cache/huggingface/
-
-# Copy application code — this is the cheapest layer, changes most often
+# Copy application code
 COPY . .
 
 ENV PORT=8080

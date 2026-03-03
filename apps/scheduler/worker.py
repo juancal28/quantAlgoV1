@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from celery import Celery
+from celery.schedules import crontab
 
 from core.config import get_settings
 
@@ -52,6 +53,13 @@ def _build_beat_schedule(settings) -> dict:
         schedule["news-cleanup-periodic"] = {
             "task": "apps.scheduler.jobs.run_news_cleanup",
             "schedule": 21600.0,  # every 6 hours
+        }
+
+    # Update ML deps on volume daily at 6:00 AM UTC (before market open)
+    if settings.SENTIMENT_PROVIDER.lower() == "finbert":
+        schedule["ml-deps-update-daily"] = {
+            "task": "apps.scheduler.jobs.run_ml_deps_update",
+            "schedule": crontab(hour=6, minute=0),
         }
 
     return schedule
