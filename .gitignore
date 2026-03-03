@@ -19,6 +19,9 @@ env/
 .idea/
 *.swp
 *.swo
+*~
+*.un~
+.*.un~
 
 # OS
 .DS_Store
