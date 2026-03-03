@@ -157,7 +157,7 @@ async def _run_news_cycle_async(
                 session,
                 ProposeStrategyInput(
                     strategy_name=strategy_name,
-                    recent_minutes=settings.NEWS_POLL_INTERVAL_SECONDS,
+                    recent_minutes=max(settings.NEWS_POLL_INTERVAL_SECONDS // 60, 2),
                 ),
                 store=store,
             )

@@ -44,8 +44,10 @@ class Settings(BaseSettings):
     # News Ingestion
     NEWS_POLL_INTERVAL_SECONDS: int = 120
     NEWS_SOURCES: str = (
-        "rss:https://feeds.finance.yahoo.com/rss/2.0/"
-        "headline?s=%5EGSPC&region=US&lang=en-US"
+        "rss:https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US,"
+        "rss:https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114,"
+        "rss:https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB"
+        "?hl=en-US&gl=US&ceid=US:en"
     )
     MAX_DOCS_PER_POLL: int = 50
     DEDUP_CONTENT_HASH: str = "sha256"

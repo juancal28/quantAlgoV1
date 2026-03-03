@@ -54,13 +54,21 @@ async def get_recent(
     session: AsyncSession,
     minutes: int = 120,
     limit: int = 50,
+    by_published: bool = False,
 ) -> list[NewsDocument]:
-    """Return the most recent news documents within the given time window."""
+    """Return the most recent news documents within the given time window.
+
+    Args:
+        by_published: If True, filter/sort by published_at (for signal evaluation
+            where stale news should not drive trades). If False, use fetched_at
+            (for API display of recently ingested articles).
+    """
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    col = NewsDocument.published_at if by_published else NewsDocument.fetched_at
     stmt = (
         select(NewsDocument)
-        .where(NewsDocument.published_at >= cutoff)
-        .order_by(NewsDocument.published_at.desc())
+        .where(col >= cutoff)
+        .order_by(col.desc())
         .limit(limit)
     )
     result = await session.execute(stmt)

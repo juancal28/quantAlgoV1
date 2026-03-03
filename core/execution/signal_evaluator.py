@@ -39,7 +39,7 @@ async def evaluate_news_sentiment_signal(
     lookback_minutes = signal_config.get("lookback_minutes", 240)
     threshold = signal_config.get("threshold", 0.65)
 
-    docs = await news_repo.get_recent(session, minutes=lookback_minutes, limit=500)
+    docs = await news_repo.get_recent(session, minutes=lookback_minutes, limit=500, by_published=True)
     if not docs:
         logger.info("No recent news docs in lookback window of %d minutes", lookback_minutes)
         return {}
