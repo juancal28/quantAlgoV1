@@ -29,9 +29,10 @@ class NewsArticleResponse(BaseModel):
 async def get_recent_news(
     minutes: int = Query(default=120, ge=1),
     limit: int = Query(default=50, ge=1, le=500),
+    by_published: bool = Query(default=True),
     session: AsyncSession = Depends(get_db),
 ) -> list[NewsArticleResponse]:
-    docs = await news_repo.get_recent(session, minutes=minutes, limit=limit)
+    docs = await news_repo.get_recent(session, minutes=minutes, limit=limit, by_published=by_published)
     return [
         NewsArticleResponse(
             id=str(d.id),

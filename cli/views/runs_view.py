@@ -2,10 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone, timedelta
 from typing import Any
 
 from rich.console import Console
 from rich.table import Table
+
+_PST = timezone(timedelta(hours=-8), name="PST")
+
+
+def _format_timestamp(ts: str | None) -> str:
+    """Format an ISO timestamp into readable 'Mar 02  2:30 PM PST' style."""
+    if not ts:
+        return "[dim]--[/]"
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        dt_pst = dt.astimezone(_PST)
+        return dt_pst.strftime("%b %d  %I:%M %p").replace("  0", "   ")
+    except (ValueError, AttributeError):
+        return ts[:19]
 
 
 def _status_style(status: str) -> str:
@@ -75,8 +90,8 @@ def render_runs(runs: list[dict[str, Any]], console: Console | None = None) -> N
     table = Table(title="Recent Runs")
     table.add_column("Type", width=16)
     table.add_column("Status", width=10)
-    table.add_column("Started", style="dim", width=20)
-    table.add_column("Ended", style="dim", width=20)
+    table.add_column("Started", style="dim", width=16)
+    table.add_column("Ended", style="dim", width=16)
     table.add_column("Details", min_width=30, no_wrap=False)
 
     for r in runs:
@@ -85,8 +100,8 @@ def render_runs(runs: list[dict[str, Any]], console: Console | None = None) -> N
         table.add_row(
             r.get("run_type", ""),
             _status_style(r.get("status", "")),
-            r.get("started_at", "")[:19],
-            (r.get("ended_at") or "")[:19] or "[dim]--[/]",
+            _format_timestamp(r.get("started_at")),
+            _format_timestamp(r.get("ended_at")),
             detail_str or "[dim]--[/]",
         )
 
