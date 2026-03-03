@@ -18,7 +18,7 @@ case "$ROLE" in
         exec uvicorn apps.api.main:app --host 0.0.0.0 --port "${PORT:-8080}"
         ;;
     worker)
-        exec celery -A apps.scheduler.worker worker --loglevel=info
+        exec celery -A apps.scheduler.worker worker --loglevel=info --concurrency="${CELERY_WORKER_CONCURRENCY:-2}"
         ;;
     beat)
         exec celery -A apps.scheduler.worker beat --loglevel=info

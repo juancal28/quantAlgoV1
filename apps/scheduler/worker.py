@@ -33,6 +33,13 @@ def _build_beat_schedule(settings) -> dict:
         "schedule": 60.0,
     }
 
+    # Auto-approve pending strategies (only when configured)
+    if settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES > 0:
+        schedule["auto-approve-periodic"] = {
+            "task": "apps.scheduler.jobs.run_auto_approve",
+            "schedule": 60.0,
+        }
+
     return schedule
 
 
@@ -44,11 +51,16 @@ def create_celery_app() -> Celery:
     app.conf.update(
         broker_url=settings.REDIS_URL,
         result_backend=settings.REDIS_URL,
+        result_expires=3600,
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],
         timezone="UTC",
         enable_utc=True,
+        task_acks_late=True,
+        task_reject_on_worker_lost=True,
+        worker_prefetch_multiplier=1,
+        broker_transport_options={"visibility_timeout": 600},
         include=["apps.scheduler.jobs"],
         beat_schedule=_build_beat_schedule(settings),
     )

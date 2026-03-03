@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -57,3 +57,91 @@ async def test_news_cycle_with_existing_run(db_session: AsyncSession):
         )
 
     assert result["early_exit"] == "no_new_docs"
+
+
+# ---------------------------------------------------------------------------
+# Singleton lock tests
+# ---------------------------------------------------------------------------
+
+
+def test_news_cycle_skips_when_lock_held():
+    """run_news_cycle returns skipped=True when Redis lock is already held."""
+    from apps.scheduler.jobs import run_news_cycle
+
+    with patch(
+        "apps.scheduler.jobs._acquire_singleton_lock", return_value=False
+    ):
+        result = run_news_cycle(run_id=None, agent_name=None)
+
+    assert result["skipped"] is True
+    assert result["reason"] == "lock_held"
+
+
+def test_news_cycle_acquires_and_releases_lock():
+    """run_news_cycle acquires lock, runs, then releases lock."""
+    from apps.scheduler.jobs import run_news_cycle
+
+    mock_acquire = MagicMock(return_value=True)
+    mock_release = MagicMock()
+
+    with (
+        patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire),
+        patch("apps.scheduler.jobs._release_singleton_lock", mock_release),
+        patch(
+            "apps.scheduler.jobs.asyncio.run",
+            return_value={"ingested": 0, "early_exit": "no_new_docs"},
+        ),
+    ):
+        result = run_news_cycle(run_id=None, agent_name=None)
+
+    mock_acquire.assert_called_once()
+    mock_release.assert_called_once()
+    assert result["ingested"] == 0
+
+
+def test_news_cycle_releases_lock_on_error():
+    """Lock is released even when the news cycle raises an exception."""
+    from apps.scheduler.jobs import run_news_cycle
+
+    mock_acquire = MagicMock(return_value=True)
+    mock_release = MagicMock()
+
+    with (
+        patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire),
+        patch("apps.scheduler.jobs._release_singleton_lock", mock_release),
+        patch(
+            "apps.scheduler.jobs.asyncio.run",
+            side_effect=RuntimeError("boom"),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="boom"):
+            run_news_cycle(run_id=None, agent_name=None)
+
+    mock_release.assert_called_once()
+
+
+def test_paper_trade_tick_skips_when_lock_held():
+    """run_paper_trade_tick_all returns skipped=True when lock is held."""
+    from apps.scheduler.jobs import run_paper_trade_tick_all
+
+    with patch(
+        "apps.scheduler.jobs._acquire_singleton_lock", return_value=False
+    ):
+        result = run_paper_trade_tick_all()
+
+    assert result["skipped"] is True
+    assert result["reason"] == "lock_held"
+
+
+def test_news_cycle_lock_name_includes_agent():
+    """Lock name is agent-specific for multi-agent setups."""
+    from apps.scheduler.jobs import run_news_cycle
+
+    mock_acquire = MagicMock(return_value=False)
+
+    with patch("apps.scheduler.jobs._acquire_singleton_lock", mock_acquire):
+        run_news_cycle(run_id=None, agent_name="tech")
+
+    mock_acquire.assert_called_once()
+    lock_name = mock_acquire.call_args[0][0]
+    assert lock_name == "news_cycle:tech"

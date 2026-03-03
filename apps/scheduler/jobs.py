@@ -22,6 +22,30 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Redis singleton locks — prevent overlapping task executions
+# ---------------------------------------------------------------------------
+
+def _get_redis_client():
+    """Return a Redis client from the configured REDIS_URL."""
+    import redis
+
+    settings = get_settings()
+    return redis.Redis.from_url(settings.REDIS_URL)
+
+
+def _acquire_singleton_lock(name: str, ttl: int) -> bool:
+    """Try to acquire a Redis lock via SET NX EX. Returns True if acquired."""
+    r = _get_redis_client()
+    return bool(r.set(f"lock:{name}", "1", nx=True, ex=ttl))
+
+
+def _release_singleton_lock(name: str) -> None:
+    """Release a Redis singleton lock."""
+    r = _get_redis_client()
+    r.delete(f"lock:{name}")
+
+
 @celery_app.task(
     bind=True,
     max_retries=3,
@@ -33,6 +57,9 @@ def run_news_cycle(
     self, run_id: str | None = None, agent_name: str | None = None
 ) -> dict:
     """Execute the full news cycle pipeline.
+
+    Uses a Redis singleton lock to prevent overlapping runs. If a previous
+    cycle is still in progress, this invocation is skipped.
 
     Steps:
     1. ingest_latest_news
@@ -49,7 +76,21 @@ def run_news_cycle(
         agent_name: Optional agent name from AGENT_CONFIGS. When provided,
             uses the agent's feeds, Qdrant collection, and strategy name.
     """
-    return asyncio.run(_run_news_cycle_async(run_id, agent_name=agent_name))
+    settings = get_settings()
+    lock_name = f"news_cycle:{agent_name or 'default'}"
+    lock_ttl = settings.NEWS_POLL_INTERVAL_SECONDS * 2
+
+    if not _acquire_singleton_lock(lock_name, lock_ttl):
+        logger.info(
+            "Skipping news_cycle — previous run still in progress (agent=%s)",
+            agent_name or "default",
+        )
+        return {"skipped": True, "reason": "lock_held"}
+
+    try:
+        return asyncio.run(_run_news_cycle_async(run_id, agent_name=agent_name))
+    finally:
+        _release_singleton_lock(lock_name)
 
 
 async def _run_news_cycle_async(
@@ -264,8 +305,21 @@ async def _run_news_cycle_async(
     name="apps.scheduler.jobs.run_paper_trade_tick_all",
 )
 def run_paper_trade_tick_all(self) -> dict:
-    """Execute paper trade tick for all active strategies."""
-    return asyncio.run(_run_paper_trade_tick_all_async())
+    """Execute paper trade tick for all active strategies.
+
+    Uses a Redis singleton lock to prevent overlapping ticks.
+    """
+    lock_name = "paper_trade_tick"
+    lock_ttl = 120
+
+    if not _acquire_singleton_lock(lock_name, lock_ttl):
+        logger.info("Skipping paper_trade_tick — previous tick still in progress")
+        return {"skipped": True, "reason": "lock_held"}
+
+    try:
+        return asyncio.run(_run_paper_trade_tick_all_async())
+    finally:
+        _release_singleton_lock(lock_name)
 
 
 async def _run_paper_trade_tick_all_async(
@@ -324,3 +378,87 @@ async def _run_paper_trade_tick_all_async(
         return result
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Auto-approve task
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=300,
+    name="apps.scheduler.jobs.run_auto_approve",
+)
+def run_auto_approve(self) -> dict:
+    """Auto-approve pending strategies older than PENDING_APPROVAL_AUTO_APPROVE_MINUTES."""
+    settings = get_settings()
+    if settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES <= 0:
+        return {"skipped": True, "reason": "auto_approve_disabled"}
+    return asyncio.run(_run_auto_approve_async())
+
+
+async def _run_auto_approve_async(
+    _session: "AsyncSession | None" = None,
+) -> dict:
+    """Async implementation: approve pending strategies older than the configured threshold."""
+    from core.agent.approval import approve_strategy
+    from core.storage.repos import strategy_repo
+
+    settings = get_settings()
+    threshold_minutes = settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=threshold_minutes)
+
+    approved: list[str] = []
+    errors: list[str] = []
+
+    async def _execute(session: "AsyncSession") -> dict:
+        pending = await strategy_repo.get_all_strategies(
+            session, status="pending_approval"
+        )
+
+        for version in pending:
+            if version.created_at.tzinfo is None:
+                created = version.created_at.replace(tzinfo=timezone.utc)
+            else:
+                created = version.created_at
+            if created > cutoff:
+                continue
+
+            try:
+                await approve_strategy(
+                    session,
+                    strategy_name=version.name,
+                    version_id=str(version.id),
+                    approved_by="auto",
+                )
+                approved.append(f"{version.name}@v{version.version}")
+                logger.info(
+                    "Auto-approved strategy %s version %s",
+                    version.name,
+                    version.version,
+                )
+            except ValueError as exc:
+                errors.append(f"{version.name}@v{version.version}: {exc}")
+                logger.warning(
+                    "Auto-approve failed for %s v%s: %s",
+                    version.name,
+                    version.version,
+                    exc,
+                )
+
+        return {"approved": approved, "errors": errors}
+
+    if _session is not None:
+        return await _execute(_session)
+
+    from core.storage.db import get_session
+
+    async for session in get_session():
+        result = await _execute(session)
+        await session.commit()
+        return result
+
+    return {"approved": approved, "errors": errors}
