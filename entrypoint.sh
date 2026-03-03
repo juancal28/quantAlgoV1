@@ -10,9 +10,21 @@ if [ "$RUN_MIGRATIONS" = "true" ]; then
     done
 fi
 
-# If a command was passed (worker/beat), run it; otherwise start uvicorn
-if [ $# -gt 0 ]; then
-    exec "$@"
-else
-    exec uvicorn apps.api.main:app --host 0.0.0.0 --port "${PORT:-8080}"
-fi
+# Dispatch based on SERVICE_ROLE (api|worker|beat), default to api
+ROLE="${SERVICE_ROLE:-api}"
+
+case "$ROLE" in
+    api)
+        exec uvicorn apps.api.main:app --host 0.0.0.0 --port "${PORT:-8080}"
+        ;;
+    worker)
+        exec celery -A apps.scheduler.worker worker --loglevel=info
+        ;;
+    beat)
+        exec celery -A apps.scheduler.worker beat --loglevel=info
+        ;;
+    *)
+        echo "FATAL: Unknown SERVICE_ROLE='$ROLE'. Must be api, worker, or beat."
+        exit 1
+        ;;
+esac
