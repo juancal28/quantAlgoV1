@@ -13,3 +13,26 @@ tests/
 htmlcov/
 .coverage
 .pytest_cache/
+
+# C++ build artifacts
+cpp/build/
+cpp/CMakeCache.txt
+cpp/CMakeFiles/
+cpp/_deps/
+*.o
+*.so
+*.pyd
+*.dll
+
+# Editor / IDE
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Docs / non-runtime
+CLAUDE.md
+DOCUMENTATION.md
+README.md
+*.md~
