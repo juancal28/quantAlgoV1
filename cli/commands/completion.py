@@ -1,4 +1,4 @@
-"""quant completion — install/show/uninstall shell tab completion (bash + zsh)."""
+"""quant completion — install/show/uninstall shell tab completion (bash, zsh, powershell)."""
 
 from __future__ import annotations
 
@@ -22,6 +22,13 @@ _BASHRC = Path.home() / ".bashrc"
 _ZSH_DIR = Path.home() / ".zfunc"
 _ZSH_SCRIPT = _ZSH_DIR / "_quant"
 _ZSHRC = Path.home() / ".zshrc"
+
+_PS_DIR = Path.home() / ".powershell_completions"
+_PS_SCRIPT = _PS_DIR / "quant.ps1"
+
+# PowerShell profile paths (PS 7+ and Windows PS 5.1).
+_PS7_PROFILE = Path.home() / "Documents" / "PowerShell" / "Microsoft.PowerShell_profile.ps1"
+_PS5_PROFILE = Path.home() / "Documents" / "WindowsPowerShell" / "Microsoft.PowerShell_profile.ps1"
 
 
 # --- Introspect the Typer app to discover commands -------------------------
@@ -136,6 +143,43 @@ compdef _{_PROG} {_PROG}
 """
 
 
+def _generate_powershell_script(tree: dict[str, list[str]]) -> str:
+    top_cmds = ", ".join(f"'{n}'" for n in sorted(tree.keys()))
+
+    sub_blocks: list[str] = []
+    for group, subs in sorted(tree.items()):
+        if subs:
+            sub_list = ", ".join(f"'{s}'" for s in subs)
+            sub_blocks.append(
+                f"        '{group}' {{ $completions = @({sub_list}) }}"
+            )
+
+    sub_switch = "\n".join(sub_blocks)
+
+    return f"""\
+# PowerShell completion for {_PROG} CLI (auto-generated)  {_MARKER}
+Register-ArgumentCompleter -CommandName {_PROG} -ScriptBlock {{
+    param($wordToComplete, $commandAst, $cursorPosition)
+
+    $tokens = $commandAst.ToString() -split '\\s+'
+
+    if ($tokens.Count -le 2) {{
+        $completions = @({top_cmds})
+    }} else {{
+        $sub = $tokens[1]
+        $completions = @()
+        switch ($sub) {{
+{sub_switch}
+        }}
+    }}
+
+    $completions | Where-Object {{ $_ -like "$wordToComplete*" }} | ForEach-Object {{
+        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+    }}
+}}
+"""
+
+
 # --- RC file helpers -------------------------------------------------------
 
 def _is_quant_completion_line(line: str) -> bool:
@@ -144,6 +188,7 @@ def _is_quant_completion_line(line: str) -> bool:
         "_complete" in lower
         or "bash_completions" in lower
         or ".zfunc" in lower
+        or "powershell_completions" in lower
         or _MARKER.lower() in lower
     )
 
@@ -156,29 +201,40 @@ def _clean_rc(rc_file: Path) -> str:
 
 
 def _detect_shell() -> str:
+    """Detect the current shell, defaulting to powershell on Windows."""
     shell_path = os.environ.get("SHELL", "")
     if "zsh" in shell_path:
         return "zsh"
+    if "bash" in shell_path:
+        return "bash"
+    # No $SHELL set — likely PowerShell on Windows.
+    if os.name == "nt":
+        return "powershell"
     return "bash"
 
 
 # --- Install / uninstall per shell -----------------------------------------
+
+def _add_source_line(rc_file: Path, source_line: str) -> None:
+    """Ensure source_line is in rc_file, cleaning old quant lines first."""
+    cleaned = _clean_rc(rc_file)
+    if source_line not in cleaned:
+        rc_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(rc_file, "w", encoding="utf-8") as f:
+            f.write(cleaned)
+            if cleaned and not cleaned.endswith("\n"):
+                f.write("\n")
+            f.write(f"\n{source_line}\n")
+    elif cleaned != (rc_file.read_text(encoding="utf-8") if rc_file.exists() else ""):
+        rc_file.write_text(cleaned, encoding="utf-8")
+
 
 def _install_bash(tree: dict[str, list[str]]) -> None:
     _BASH_DIR.mkdir(parents=True, exist_ok=True)
     _BASH_SCRIPT.write_text(_generate_bash_script(tree), encoding="utf-8")
 
     source_line = f'source "{_BASH_SCRIPT.as_posix()}"  {_MARKER}'
-    cleaned = _clean_rc(_BASHRC)
-
-    if source_line not in cleaned:
-        with open(_BASHRC, "w", encoding="utf-8") as f:
-            f.write(cleaned)
-            if cleaned and not cleaned.endswith("\n"):
-                f.write("\n")
-            f.write(f"\n{source_line}\n")
-    elif cleaned != (_BASHRC.read_text(encoding="utf-8") if _BASHRC.exists() else ""):
-        _BASHRC.write_text(cleaned, encoding="utf-8")
+    _add_source_line(_BASHRC, source_line)
 
     typer.echo(f"[bash] Script installed: {_BASH_SCRIPT.as_posix()}")
     typer.echo(f"[bash] Source line in:   {_BASHRC.as_posix()}")
@@ -189,23 +245,40 @@ def _install_zsh(tree: dict[str, list[str]]) -> None:
     _ZSH_SCRIPT.write_text(_generate_zsh_script(tree), encoding="utf-8")
 
     source_line = f'source "{_ZSH_SCRIPT.as_posix()}"  {_MARKER}'
-    cleaned = _clean_rc(_ZSHRC)
-
-    if source_line not in cleaned:
-        with open(_ZSHRC, "w", encoding="utf-8") as f:
-            f.write(cleaned)
-            if cleaned and not cleaned.endswith("\n"):
-                f.write("\n")
-            f.write(f"\n{source_line}\n")
-    elif cleaned != (_ZSHRC.read_text(encoding="utf-8") if _ZSHRC.exists() else ""):
-        _ZSHRC.write_text(cleaned, encoding="utf-8")
+    _add_source_line(_ZSHRC, source_line)
 
     typer.echo(f"[zsh]  Script installed: {_ZSH_SCRIPT.as_posix()}")
     typer.echo(f"[zsh]  Source line in:   {_ZSHRC.as_posix()}")
 
 
+def _install_powershell(tree: dict[str, list[str]]) -> None:
+    _PS_DIR.mkdir(parents=True, exist_ok=True)
+    _PS_SCRIPT.write_text(_generate_powershell_script(tree), encoding="utf-8")
+
+    # Use Windows backslash path for PowerShell dot-source.
+    ps_path = str(_PS_SCRIPT)
+    source_line = f'. "{ps_path}"  {_MARKER}'
+
+    # Add to whichever PS profiles exist (or create the 5.1 profile).
+    profiles_updated: list[Path] = []
+    for profile in (_PS7_PROFILE, _PS5_PROFILE):
+        if profile.parent.exists():
+            _add_source_line(profile, source_line)
+            profiles_updated.append(profile)
+
+    if not profiles_updated:
+        # Neither profile dir exists — create for Windows PS 5.1.
+        _PS5_PROFILE.parent.mkdir(parents=True, exist_ok=True)
+        _add_source_line(_PS5_PROFILE, source_line)
+        profiles_updated.append(_PS5_PROFILE)
+
+    typer.echo(f"[powershell] Script installed: {_PS_SCRIPT}")
+    for p in profiles_updated:
+        typer.echo(f"[powershell] Source line in:   {p}")
+
+
 def _uninstall_shell(
-    label: str, script: Path, rc_file: Path,
+    label: str, script: Path, rc_files: list[Path],
 ) -> None:
     if script.exists():
         script.unlink()
@@ -213,74 +286,91 @@ def _uninstall_shell(
     else:
         typer.echo(f"[{label}] Script not found (already removed).")
 
-    if rc_file.exists():
-        original = rc_file.read_text(encoding="utf-8")
-        cleaned = _clean_rc(rc_file)
-        if cleaned != original:
-            rc_file.write_text(cleaned, encoding="utf-8")
-            typer.echo(f"[{label}] Source line removed from: {rc_file.as_posix()}")
-        else:
-            typer.echo(f"[{label}] No completion line in {rc_file.name}.")
+    for rc_file in rc_files:
+        if rc_file.exists():
+            original = rc_file.read_text(encoding="utf-8")
+            cleaned = _clean_rc(rc_file)
+            if cleaned != original:
+                rc_file.write_text(cleaned, encoding="utf-8")
+                typer.echo(f"[{label}] Source line removed from: {rc_file}")
+            else:
+                typer.echo(f"[{label}] No completion line in {rc_file.name}.")
 
 
 # --- CLI commands -----------------------------------------------------------
 
+_ALL_SHELLS = ["bash", "zsh", "powershell"]
+
+
 def _resolve_shells(shell: str) -> list[str]:
     shell = shell.strip().lower()
     if shell == "all":
-        return ["bash", "zsh"]
+        return _ALL_SHELLS
+    if shell in ("powershell", "pwsh", "ps"):
+        return ["powershell"]
     if shell in ("bash", "zsh"):
         return [shell]
     if shell == "":
         return [_detect_shell()]
-    typer.echo(f"Unknown shell '{shell}'. Supported: bash, zsh, all.")
+    typer.echo(f"Unknown shell '{shell}'. Supported: bash, zsh, powershell, all.")
     raise typer.Exit(1)
+
+
+_INSTALLERS = {
+    "bash": _install_bash,
+    "zsh": _install_zsh,
+    "powershell": _install_powershell,
+}
+
+_UNINSTALLERS = {
+    "bash": ("bash", _BASH_SCRIPT, [_BASHRC]),
+    "zsh": ("zsh", _ZSH_SCRIPT, [_ZSHRC]),
+    "powershell": ("powershell", _PS_SCRIPT, [_PS7_PROFILE, _PS5_PROFILE]),
+}
+
+_GENERATORS = {
+    "bash": _generate_bash_script,
+    "zsh": _generate_zsh_script,
+    "powershell": _generate_powershell_script,
+}
 
 
 @completion_app.command("install")
 def install(
     shell: str = typer.Option(
         "", "--shell", "-s",
-        help="Shell to install for: bash, zsh, or all. Auto-detects if omitted.",
+        help="Shell to install for: bash, zsh, powershell, or all. Auto-detects if omitted.",
     ),
 ) -> None:
     """Install tab-completion for the quant CLI."""
     tree = _get_command_tree()
     for sh in _resolve_shells(shell):
-        if sh == "bash":
-            _install_bash(tree)
-        else:
-            _install_zsh(tree)
-    typer.echo("Restart your shell (or source the rc file) to activate.")
+        _INSTALLERS[sh](tree)
+    typer.echo("Restart your shell to activate.")
 
 
 @completion_app.command("show")
 def show(
     shell: str = typer.Option(
         "", "--shell", "-s",
-        help="Shell variant: bash or zsh. Auto-detects if omitted.",
+        help="Shell variant: bash, zsh, or powershell. Auto-detects if omitted.",
     ),
 ) -> None:
     """Print the completion script to stdout (for manual install)."""
     tree = _get_command_tree()
     sh = _resolve_shells(shell)[0]
-    if sh == "bash":
-        typer.echo(_generate_bash_script(tree), nl=False)
-    else:
-        typer.echo(_generate_zsh_script(tree), nl=False)
+    typer.echo(_GENERATORS[sh](tree), nl=False)
 
 
 @completion_app.command("uninstall")
 def uninstall(
     shell: str = typer.Option(
         "", "--shell", "-s",
-        help="Shell to uninstall for: bash, zsh, or all. Auto-detects if omitted.",
+        help="Shell to uninstall for: bash, zsh, powershell, or all. Auto-detects if omitted.",
     ),
 ) -> None:
     """Remove tab-completion for the quant CLI."""
     for sh in _resolve_shells(shell):
-        if sh == "bash":
-            _uninstall_shell("bash", _BASH_SCRIPT, _BASHRC)
-        else:
-            _uninstall_shell("zsh", _ZSH_SCRIPT, _ZSHRC)
+        label, script, rc_files = _UNINSTALLERS[sh]
+        _uninstall_shell(label, script, rc_files)
     typer.echo("Completion uninstalled. Restart your shell to take effect.")
