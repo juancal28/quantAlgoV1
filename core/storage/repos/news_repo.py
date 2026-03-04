@@ -16,6 +16,17 @@ async def get_by_id(session: AsyncSession, doc_id: uuid.UUID) -> NewsDocument | 
     return await session.get(NewsDocument, doc_id)
 
 
+async def get_by_ids(session: AsyncSession, doc_ids: list[uuid.UUID]) -> list[NewsDocument]:
+    """Fetch multiple news documents by primary key."""
+    if not doc_ids:
+        return []
+    # Convert to strings for SQLite compat (UUID→String(36) adaptation)
+    id_values = [str(d) for d in doc_ids]
+    stmt = select(NewsDocument).where(NewsDocument.id.in_(id_values))
+    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
 async def get_by_content_hash(session: AsyncSession, content_hash: str) -> NewsDocument | None:
     """Fetch a news document by its content SHA-256 hash."""
     stmt = select(NewsDocument).where(NewsDocument.content_hash == content_hash)

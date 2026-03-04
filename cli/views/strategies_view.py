@@ -32,19 +32,26 @@ def render_strategies(strategies: list[dict[str, Any]], console: Console | None 
     table.add_column("Status", width=18)
     table.add_column("Created", style="dim", width=20)
     table.add_column("Approved By", width=12)
-    table.add_column("Sharpe", justify="right", width=8)
+    table.add_column("Quality", justify="right", width=8)
 
     for s in strategies:
         metrics = s.get("backtest_metrics") or {}
-        sharpe = metrics.get("sharpe")
-        sharpe_text = f"{sharpe:.2f}" if sharpe is not None else "[dim]--[/]"
+        # New quality-scored entries
+        qs = metrics.get("quality_score")
+        if qs and isinstance(qs, dict):
+            composite = qs.get("composite")
+            quality_text = f"{composite:.2f}" if composite is not None else "[dim]--[/]"
+        else:
+            # Backward compat: old entries with Sharpe
+            sharpe = metrics.get("sharpe")
+            quality_text = f"{sharpe:.2f}" if sharpe is not None else "[dim]--[/]"
         table.add_row(
             s.get("name", ""),
             str(s.get("version", "")),
             _status_style(s.get("status", "")),
             s.get("created_at", "")[:19],
             s.get("approved_by") or "[dim]--[/]",
-            sharpe_text,
+            quality_text,
         )
 
     console.print(table)
@@ -62,8 +69,20 @@ def render_strategy_detail(s: dict[str, Any], console: Console | None = None) ->
     metrics = s.get("backtest_metrics") or {}
     if metrics:
         lines.append("")
-        lines.append("[bold]Backtest Metrics:[/]")
-        for k, v in metrics.items():
-            lines.append(f"  {k}: {v}")
+        qs = metrics.get("quality_score")
+        if qs and isinstance(qs, dict):
+            lines.append("[bold]Quality Score:[/]")
+            composite = qs.get("composite", 0)
+            passed = qs.get("passed", False)
+            color = "green" if passed else "red"
+            lines.append(f"  composite: [{color}]{composite:.4f}[/] ({'passed' if passed else 'failed'})")
+            dims = qs.get("dimensions", {})
+            for name, info in dims.items():
+                lines.append(f"  {name}: {info.get('score', 0):.4f} (w={info.get('weight', 0)}) — {info.get('detail', '')}")
+        else:
+            # Backward compat: old backtest metrics
+            lines.append("[bold]Backtest Metrics:[/]")
+            for k, v in metrics.items():
+                lines.append(f"  {k}: {v}")
 
     console.print(Panel("\n".join(lines), title="Strategy Detail", border_style="cyan"))

@@ -114,6 +114,15 @@ class Settings(BaseSettings):
     BACKTEST_MAX_DRAWDOWN: float = Field(default=0.35)
     BACKTEST_MIN_WIN_RATE: float = Field(default=0.30)
 
+    # Quality scoring (proposal evaluation — replaces backtest gate)
+    QUALITY_MIN_COMPOSITE_SCORE: float = 0.5
+    QUALITY_MIN_CITED_DOCS: int = 3
+    QUALITY_RECENCY_LOOKBACK_MINUTES: int = 480
+    QUALITY_WEIGHT_EVIDENCE: float = 0.30
+    QUALITY_WEIGHT_RECENCY: float = 0.25
+    QUALITY_WEIGHT_CONSENSUS: float = 0.25
+    QUALITY_WEIGHT_COVERAGE: float = 0.20
+
     # Multi-agent
     AGENT_CONFIGS: str = "[]"
 

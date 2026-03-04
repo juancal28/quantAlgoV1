@@ -151,6 +151,19 @@ STRATEGY_APPROVED_UNIVERSE=SPY,QQQ,AAPL,MSFT,AMZN,GOOGL,META,NVDA,BRK.B,JPM
 PENDING_APPROVAL_AUTO_APPROVE_MINUTES=0   # 0 = never auto-approve; N = approve after N min in paper mode
 ```
 
+### Quality Scoring (replaces backtest gate in pipeline)
+```
+QUALITY_MIN_COMPOSITE_SCORE=0.5          # composite threshold for proposal to pass
+QUALITY_MIN_CITED_DOCS=3                 # target number of cited docs for full evidence score
+QUALITY_RECENCY_LOOKBACK_MINUTES=480     # docs older than this get recency=0
+QUALITY_WEIGHT_EVIDENCE=0.30             # weight for evidence strength dimension
+QUALITY_WEIGHT_RECENCY=0.25             # weight for recency dimension
+QUALITY_WEIGHT_CONSENSUS=0.25           # weight for sentiment consensus dimension
+QUALITY_WEIGHT_COVERAGE=0.20            # weight for universe ticker coverage dimension
+```
+
+Note: `run_backtest` MCP tool and API endpoint remain available for manual use. Only the automated pipeline gate uses quality scoring.
+
 ### Startup Validation
 ```python
 if settings.TRADING_MODE != "paper":
@@ -503,10 +516,9 @@ news_cycle (every NEWS_POLL_INTERVAL_SECONDS):
   3. score_sentiment
   4. propose_strategy_update
   5. validate_strategy
-  6. run_backtest (in-sample window: last STRATEGY_MIN_BACKTEST_DAYS days)
-  7. run_backtest (out-of-sample: 90 days before in-sample)
-  8. if both pass thresholds → submit_strategy_for_approval (status=pending_approval)
-  9. write run record to DB
+  6. score_proposal_quality (evidence, recency, consensus, coverage)
+  7. if quality passes threshold → submit_strategy_for_approval (status=pending_approval)
+  8. write run record to DB
 
 paper_trade_tick (every 1 minute, market hours only):
   1. paper_trade_tick for each active strategy
@@ -620,6 +632,7 @@ quant-news-rag/
       strategy_language.py
       validator.py
       approval.py                  ← approval gate logic
+      quality_scorer.py            ← proposal quality scoring (replaces backtest gate)
     strategies/
       base.py
       registry.py
@@ -656,6 +669,7 @@ quant-news-rag/
     test_market_hours.py
     test_price_feed.py
     test_signal_evaluator.py
+    test_quality_scorer.py
 ```
 
 ---
@@ -678,6 +692,7 @@ All tests must pass with `pytest`. No external services — use mocks/fakes for 
 | `test_market_hours` | paper_trade_tick no-ops outside market hours |
 | `test_price_feed` | MockPriceFeed returns preset prices; DbPriceFeed uses open price, skips stale data |
 | `test_signal_evaluator` | Sentiment threshold filtering, volatility gate, position reconciliation, order execution flow |
+| `test_quality_scorer` | Evidence strength, recency, consensus, coverage scoring; composite threshold; graceful handling of missing docs |
 
 ---
 

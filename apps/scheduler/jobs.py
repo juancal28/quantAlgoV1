@@ -83,9 +83,8 @@ def run_news_cycle(
     3. score_sentiment
     4. propose_strategy_update
     5. validate_strategy
-    6. run_backtest (in-sample)
-    7. run_backtest (out-of-sample)
-    8. submit_strategy_for_approval (if both pass)
+    6. score_proposal_quality
+    7. submit_strategy_for_approval (if quality passes)
 
     Args:
         run_id: Optional pre-created run ID.
@@ -130,12 +129,10 @@ async def _run_news_cycle_async(
         EmbedInput,
         IngestInput,
         ProposeStrategyInput,
-        RunBacktestInput,
         SentimentInput,
         SubmitStrategyInput,
         ValidateStrategyInput,
     )
-    from apps.mcp_server.tools.backtest import run_backtest_tool
     from apps.mcp_server.tools.ingest import ingest_latest_news
     from apps.mcp_server.tools.kb import embed_and_upsert_docs
     from apps.mcp_server.tools.sentiment import score_sentiment
@@ -144,6 +141,7 @@ async def _run_news_cycle_async(
         submit_strategy,
         validate_strategy_tool,
     )
+    from core.agent.quality_scorer import score_proposal_quality
     from core.ingestion.fetchers.rss import RSSFetcher
     from core.kb.vectorstore import get_vectorstore
     from core.storage.repos import run_repo
@@ -198,7 +196,7 @@ async def _run_news_cycle_async(
             details["doc_ids"] = ingest_result.doc_ids
             details["timing_ingest_s"] = round(time.monotonic() - t0, 2)
             logger.info(
-                "Step 1/8 ingest: %d docs in %.1fs",
+                "Step 1/7 ingest: %d docs in %.1fs",
                 ingest_result.ingested, details["timing_ingest_s"],
             )
 
@@ -214,7 +212,7 @@ async def _run_news_cycle_async(
                 details["upserted_chunks"] = embed_result.upserted_chunks
                 details["timing_embed_s"] = round(time.monotonic() - t0, 2)
                 logger.info(
-                    "Step 2/8 embed: %d chunks in %.1fs",
+                    "Step 2/7 embed: %d chunks in %.1fs",
                     embed_result.upserted_chunks, details["timing_embed_s"],
                 )
 
@@ -226,7 +224,7 @@ async def _run_news_cycle_async(
                 details["scored"] = sentiment_result.scored
                 details["timing_sentiment_s"] = round(time.monotonic() - t0, 2)
                 logger.info(
-                    "Step 3/8 sentiment: %d scored in %.1fs",
+                    "Step 3/7 sentiment: %d scored in %.1fs",
                     sentiment_result.scored, details["timing_sentiment_s"],
                 )
 
@@ -247,7 +245,7 @@ async def _run_news_cycle_async(
             details["confidence"] = confidence
             details["timing_propose_s"] = round(time.monotonic() - t0, 2)
             logger.info(
-                "Step 4/8 propose: confidence=%.2f in %.1fs",
+                "Step 4/7 propose: confidence=%.2f in %.1fs",
                 confidence, details["timing_propose_s"],
             )
 
@@ -272,7 +270,7 @@ async def _run_news_cycle_async(
             details["validation_errors"] = validation.errors
             details["timing_validate_s"] = round(time.monotonic() - t0, 2)
             logger.info(
-                "Step 5/8 validate: valid=%s in %.1fs",
+                "Step 5/7 validate: valid=%s in %.1fs",
                 validation.valid, details["timing_validate_s"],
             )
 
@@ -287,76 +285,25 @@ async def _run_news_cycle_async(
                 await session.flush()
                 return details
 
-            # 5b. Fetch market data for backtest universe
+            # 6. Score proposal quality
             t0 = time.monotonic()
-            universe = new_definition.get("universe", [])
-            backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
-            # Need enough data for IS window + OOS window (90 days before IS)
-            is_calendar_days = int(backtest_days * 365 / 252)
-            total_lookback_days = is_calendar_days + 90 + 30  # extra buffer
-            try:
-                from core.ingestion.fetchers.market_data import fetch_and_store_bars
-
-                bars_upserted = await fetch_and_store_bars(
-                    session,
-                    tickers=universe,
-                    lookback_days=total_lookback_days,
-                )
-                details["market_bars_upserted"] = bars_upserted
-                details["timing_market_data_s"] = round(time.monotonic() - t0, 2)
-                logger.info(
-                    "Step 5b/8 market data: %d bars for %s in %.1fs",
-                    bars_upserted, universe, details["timing_market_data_s"],
-                )
-            except Exception as exc:
-                details["market_data_error"] = str(exc)
-                details["timing_market_data_s"] = round(time.monotonic() - t0, 2)
-                logger.warning(
-                    "Market data fetch failed (%.1fs): %s — backtest may fail",
-                    details["timing_market_data_s"], exc,
-                )
-
-            # 6. Run backtest — in-sample
-            t0 = time.monotonic()
-            backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
-            end_date = datetime.now(timezone.utc).date()
-            is_start = end_date - timedelta(days=int(backtest_days * 365 / 252))
-            is_result = await run_backtest_tool(
-                session,
-                RunBacktestInput(
-                    definition_json=new_definition,
-                    start=is_start.isoformat(),
-                    end=end_date.isoformat(),
-                ),
+            quality_result = await score_proposal_quality(
+                session, proposal, new_definition,
             )
-            details["in_sample_passed"] = is_result.passed
-            details["timing_backtest_is_s"] = round(time.monotonic() - t0, 2)
+            details["quality_score"] = quality_result.composite
+            details["quality_passed"] = quality_result.passed
+            details["quality_dimensions"] = {
+                dim.name: {"score": round(dim.score, 4), "detail": dim.detail}
+                for dim in quality_result.dimensions
+            }
+            details["timing_quality_s"] = round(time.monotonic() - t0, 2)
             logger.info(
-                "Step 6/8 backtest IS: passed=%s in %.1fs",
-                is_result.passed, details["timing_backtest_is_s"],
+                "Step 6/7 quality: composite=%.3f passed=%s in %.1fs",
+                quality_result.composite, quality_result.passed, details["timing_quality_s"],
             )
 
-            # 7. Run backtest — out-of-sample (90 days before in-sample)
-            t0 = time.monotonic()
-            oos_end = is_start - timedelta(days=1)
-            oos_start = oos_end - timedelta(days=90)
-            oos_result = await run_backtest_tool(
-                session,
-                RunBacktestInput(
-                    definition_json=new_definition,
-                    start=oos_start.isoformat(),
-                    end=oos_end.isoformat(),
-                ),
-            )
-            details["oos_passed"] = oos_result.passed
-            details["timing_backtest_oos_s"] = round(time.monotonic() - t0, 2)
-            logger.info(
-                "Step 7/8 backtest OOS: passed=%s in %.1fs",
-                oos_result.passed, details["timing_backtest_oos_s"],
-            )
-
-            # 8. Submit for approval if both pass
-            if is_result.passed and oos_result.passed:
+            # 7. Submit for approval if quality passes
+            if quality_result.passed:
                 t0 = time.monotonic()
                 submit_result = await submit_strategy(
                     session,
@@ -365,22 +312,21 @@ async def _run_news_cycle_async(
                         definition_json=new_definition,
                         reason=proposal.get("rationale", "Agent-proposed update"),
                         backtest_metrics={
-                            "in_sample": is_result.metrics.model_dump(),
-                            "out_of_sample": oos_result.metrics.model_dump(),
+                            "quality_score": quality_result.to_dict(),
                         },
                     ),
                 )
                 details["submitted_version_id"] = submit_result.strategy_version_id
                 details["timing_submit_s"] = round(time.monotonic() - t0, 2)
                 logger.info(
-                    "Step 8/8 submit: version_id=%s in %.1fs",
+                    "Step 7/7 submit: version_id=%s in %.1fs",
                     submit_result.strategy_version_id, details["timing_submit_s"],
                 )
             else:
-                details["early_exit"] = "backtest_failed"
+                details["early_exit"] = "quality_failed"
                 logger.warning(
-                    "Pipeline exit: backtest_failed (IS=%s, OOS=%s)",
-                    is_result.passed, oos_result.passed,
+                    "Pipeline exit: quality_failed (composite=%.3f < %.3f)",
+                    quality_result.composite, settings.QUALITY_MIN_COMPOSITE_SCORE,
                 )
 
             details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)

@@ -63,12 +63,18 @@ def _summarize_details(details: dict[str, Any]) -> str:
     if "valid" in details:
         valid = details["valid"]
         parts.append(f"valid={'[green]yes[/]' if valid else '[red]no[/]'}")
-    if "in_sample_passed" in details:
+    if "quality_score" in details:
+        qs = details["quality_score"]
+        qp = details.get("quality_passed", False)
+        color = "green" if qp else "red"
+        parts.append(f"quality=[{color}]{qs:.2f}[/]")
+    # Backward compat: old runs with backtest data
+    elif "in_sample_passed" in details:
         p = details["in_sample_passed"]
         parts.append(f"IS={'[green]pass[/]' if p else '[red]fail[/]'}")
-    if "oos_passed" in details:
-        p = details["oos_passed"]
-        parts.append(f"OOS={'[green]pass[/]' if p else '[red]fail[/]'}")
+        if "oos_passed" in details:
+            p2 = details["oos_passed"]
+            parts.append(f"OOS={'[green]pass[/]' if p2 else '[red]fail[/]'}")
     if "submitted_version_id" in details:
         vid = str(details["submitted_version_id"])[:8]
         parts.append(f"[green]submitted={vid}...[/]")

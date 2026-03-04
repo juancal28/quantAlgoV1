@@ -1563,9 +1563,102 @@ The v1 system has solid engineering infrastructure but limited mathematical dept
 
 ---
 
+### Phase 21: Strategy Outcome Memory (Next to Implement)
+
+**Goal:** Build a persistent hashmap that maps `(news_context, strategy_definition)` to observed outcomes. When a new proposal resembles a past success, boost its quality score; when it resembles a past failure, penalize it. The system learns from its own trading history.
+
+**New modules:** `core/agent/fingerprint.py`, `core/agent/outcome_recorder.py`
+
+**New Postgres table: `strategy_outcomes`**
+
+```
+id                  uuid pk
+fingerprint_hash    text (indexed)         -- SHA-256 key
+context_fingerprint jsonb                  -- raw fingerprint for debugging
+strategy_fingerprint jsonb
+strategy_version_id uuid fk               -- which version produced this
+activated_at        timestamptz
+deactivated_at      timestamptz nullable
+outcome             text                   -- "success" | "failure" | "neutral"
+pnl_return          float                  -- realized return during active period
+sharpe_estimate     float nullable         -- realized Sharpe during active period
+created_at          timestamptz
+```
+
+**Hashing scheme:**
+
+1. **Context fingerprint** from the news:
+   - Sort cited doc sentiment labels into a canonical tuple
+   - Extract sorted set of impacted tickers
+   - Quantize average sentiment: `[-1,-0.3)` = bearish, `[-0.3,0.3]` = neutral, `(0.3,1]` = bullish
+   - Result: `("bearish", ("AAPL", "NVDA"), "tech_earnings")` — a semantic fingerprint, not exact content
+
+2. **Strategy fingerprint** from the definition:
+   - Signal types used (sorted)
+   - Direction (long/flat)
+   - Universe (sorted tickers)
+   - Position sizing type
+   - Ignore numeric parameters (thresholds, lookback) — too granular for similarity
+
+3. **Hash key** = `SHA-256(canonical_json(context_fingerprint + strategy_fingerprint))`
+
+**Outcome classification** (when a strategy version transitions `active` → `archived`):
+- `success`: return > 0 AND no circuit breaker trip
+- `failure`: return < -1% OR circuit breaker tripped
+- `neutral`: everything else
+
+**Quality score integration** — adds a 5th dimension to the quality scorer:
+
+| Dimension | New Weight |
+|---|---|
+| Evidence strength | 0.25 (from 0.30) |
+| Recency | 0.20 (from 0.25) |
+| Sentiment consensus | 0.20 (from 0.25) |
+| Coverage | 0.15 (from 0.20) |
+| **Historical memory** | **0.20 (new)** |
+
+**Memory score calculation:**
+1. Compute fingerprint hash for the current proposal
+2. Query `strategy_outcomes` for matching or similar hashes
+3. Exact match: `+0.3` for success, `-0.3` for failure, `0.0` for neutral
+4. Fuzzy match (same strategy fingerprint, different context bucket): `+0.15` / `-0.15`
+5. No matches: `0.5` (neutral baseline)
+6. Clamp to [0.0, 1.0]
+
+**Fuzzy matching:** Query by `strategy_fingerprint` only (ignoring context). Among matches, find the closest context fingerprint by sentiment bucket overlap and ticker overlap.
+
+**New config vars:**
+```
+QUALITY_WEIGHT_MEMORY=0.20
+QUALITY_MEMORY_SUCCESS_BONUS=0.3
+QUALITY_MEMORY_FAILURE_PENALTY=0.3
+QUALITY_MEMORY_FUZZY_FACTOR=0.5
+```
+
+**Implementation steps:**
+1. Alembic migration: create `strategy_outcomes` table
+2. `core/agent/fingerprint.py` — context + strategy fingerprinting + hashing
+3. `core/agent/outcome_recorder.py` — record outcomes when strategies are archived
+4. Update `core/agent/quality_scorer.py` — add memory dimension
+5. Hook into strategy archival flow in `core/agent/approval.py`
+6. Tests: fingerprint determinism, outcome recording, memory score boost/penalty
+7. Update CLAUDE.md with Phase 21 docs
+
+**Why this works:**
+- Not exact replay — the hash captures the *type* of situation (bearish tech earnings) + *type* of strategy (long sentiment momentum on tech), not exact news content
+- Learns from experience — successful patterns get reinforced, failed patterns get penalized
+- Degrades gracefully — no matches = neutral score, system works the same as without memory
+- Auditable — raw fingerprints stored in JSONB for debugging why a match occurred
+
+**New test file:** `tests/test_outcome_memory.py` — fingerprint determinism, outcome recording, memory score boost/penalty, fuzzy matching, no-match neutral baseline.
+
+---
+
 ### Implementation Priority
 
 ```
+Phase 21 (Outcome Memory)         <- standalone, next to implement
+  |
 Phase 13 (Account Reconciliation)  <- standalone
   |
 Phase 14 (Alpha/IC)
