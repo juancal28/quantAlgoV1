@@ -10,6 +10,7 @@ from rich.table import Table
 from cli.commands.completion import completion_app
 from cli.commands.cycle import cycle
 from cli.commands.dashboard import dashboard
+from cli.commands.ml_deps import ml_deps_update
 from cli.commands.news import news
 from cli.commands.pnl import pnl
 from cli.commands.runs import runs
@@ -40,6 +41,7 @@ app.command()(runs)
 app.command()(pnl)
 app.command()(cycle)
 app.command()(dashboard)
+app.command(name="ml-deps-update")(ml_deps_update)
 app.command()(upgrade)
 
 
@@ -67,6 +69,7 @@ def help() -> None:
         ("quant pnl STRATEGY [-d DAYS]", "Daily PnL snapshots with sparkline"),
         ("quant cycle", "Trigger a manual news cycle"),
         ("quant dashboard [-i SECS]", "Live auto-refreshing dashboard (Ctrl+C to exit)"),
+        ("quant ml-deps-update", "Update torch/transformers/FinBERT on the persistent volume"),
         ("quant upgrade", "Pull latest changes from git and reinstall"),
         ("quant config set-url URL", "Save the Railway API URL"),
         ("quant completion install [-s SHELL]", "Install tab-completion (bash/zsh/all, auto-detects)"),
