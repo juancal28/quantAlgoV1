@@ -36,6 +36,46 @@ def _sentiment_style(label: str | None, score: float | None) -> tuple[str, str]:
     return f"[dim]{score:+.2f}[/]", f"[dim]{label}[/]"
 
 
+def _friendly_source(raw: str) -> str:
+    """Extract a short, human-readable source name from a URL or prefixed string."""
+    # Strip scheme prefixes like "rss:"
+    url = raw.split(":", 1)[1] if ":" in raw else raw
+    url = url.lstrip("/")
+    # Extract domain
+    try:
+        from urllib.parse import urlparse
+        hostname = urlparse(f"https://{url}" if "//" not in url else url).hostname or url
+    except Exception:
+        hostname = url
+    # Remove common prefixes
+    if hostname.startswith("www."):
+        hostname = hostname[4:]
+    # Remove common suffixes for brevity
+    if hostname.startswith("feeds."):
+        hostname = hostname[6:]
+    # Return just the domain name part (e.g. "finance.yahoo.com" -> "Yahoo Finance")
+    _KNOWN = {
+        "finance.yahoo.com": "Yahoo Finance",
+        "yahoo.com": "Yahoo Finance",
+        "reuters.com": "Reuters",
+        "bloomberg.com": "Bloomberg",
+        "cnbc.com": "CNBC",
+        "wsj.com": "WSJ",
+        "marketwatch.com": "MarketWatch",
+        "investing.com": "Investing.com",
+        "seekingalpha.com": "Seeking Alpha",
+        "ft.com": "Financial Times",
+        "barrons.com": "Barron's",
+        "benzinga.com": "Benzinga",
+        "fool.com": "Motley Fool",
+    }
+    for domain, name in _KNOWN.items():
+        if domain in hostname:
+            return name
+    # Fallback: capitalize first segment of domain
+    return hostname.split(".")[0].capitalize()
+
+
 def render_news(articles: list[dict[str, Any]], console: Console | None = None) -> None:
     console = console or Console()
 
@@ -59,7 +99,7 @@ def render_news(articles: list[dict[str, Any]], console: Console | None = None) 
         table.add_row(
             _format_published(a.get("published_at", "")),
             a.get("title", "")[:50],
-            a.get("source", ""),
+            _friendly_source(a.get("source", "")),
             score_text,
             label_text,
             tickers or "[dim]--[/]",
