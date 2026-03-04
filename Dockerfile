@@ -9,14 +9,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Layer 1: Build tools — almost never changes
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip,target=/root/.cache/pip \
     pip install scikit-build-core pybind11 cmake ninja
 
 # Layer 2: App dependencies — cached until pyproject.toml changes
 # NOTE: torch/transformers/FinBERT are NOT installed here. They live on
 # a Railway persistent volume and are set up at runtime by entrypoint.sh.
 COPY pyproject.toml ./
-RUN --mount=type=cache,target=/root/.cache/pip \
+RUN --mount=type=cache,id=pip,target=/root/.cache/pip \
     python -c "\
 import tomllib, pathlib; \
 t = tomllib.load(open('pyproject.toml', 'rb')); \
