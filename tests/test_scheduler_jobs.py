@@ -21,32 +21,24 @@ async def test_paper_trade_tick_no_active_strategies(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_news_cycle_creates_run_record(db_session: AsyncSession):
-    """News cycle should create a run record and proceed to proposal on 0 ingested docs."""
-    from apps.mcp_server.schemas import ProposeStrategyOutput
+    """News cycle should create a run record and exit early on 0 ingested docs."""
     from apps.scheduler.jobs import _run_news_cycle_async
 
     mock_ingest_output = AsyncMock(ingested=0, doc_ids=[])
     mock_ingest = AsyncMock(return_value=mock_ingest_output)
-    mock_propose = AsyncMock(
-        return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
-    )
 
     with patch(
         "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
-    ), patch(
-        "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
     ):
         result = await _run_news_cycle_async(_session=db_session)
 
-    assert result.get("skipped_embed_sentiment") is True
-    assert result["early_exit"] == "low_confidence"
+    assert result["early_exit"] == "no_new_docs"
     assert result["ingested"] == 0
 
 
 @pytest.mark.asyncio
 async def test_news_cycle_with_existing_run(db_session: AsyncSession):
     """News cycle with a pre-created run_id should use that run record."""
-    from apps.mcp_server.schemas import ProposeStrategyOutput
     from apps.scheduler.jobs import _run_news_cycle_async
 
     # Create a run record first
@@ -56,20 +48,15 @@ async def test_news_cycle_with_existing_run(db_session: AsyncSession):
 
     mock_ingest_output = AsyncMock(ingested=0, doc_ids=[])
     mock_ingest = AsyncMock(return_value=mock_ingest_output)
-    mock_propose = AsyncMock(
-        return_value=ProposeStrategyOutput(proposal={"confidence": 0.0})
-    )
 
     with patch(
         "apps.mcp_server.tools.ingest.ingest_latest_news", mock_ingest
-    ), patch(
-        "apps.mcp_server.tools.strategy.propose_strategy", mock_propose
     ):
         result = await _run_news_cycle_async(
             run_id=run_id_str, _session=db_session
         )
 
-    assert result["early_exit"] == "low_confidence"
+    assert result["early_exit"] == "no_new_docs"
 
 
 # ---------------------------------------------------------------------------

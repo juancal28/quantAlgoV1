@@ -78,9 +78,9 @@ def run_news_cycle(
     cycle is still in progress, this invocation is skipped.
 
     Steps:
-    1. ingest_latest_news
-    2. embed_and_upsert_docs
-    3. score_sentiment
+    1. ingest_latest_news (early exit if 0 new docs — saves LLM call)
+    2. score_sentiment (before embed so Qdrant payloads have scores)
+    3. embed_and_upsert_docs
     4. propose_strategy_update
     5. validate_strategy
     6. score_proposal_quality
@@ -201,32 +201,36 @@ async def _run_news_cycle_async(
             )
 
             if ingest_result.ingested == 0:
-                logger.info("No new docs ingested — skipping embed/sentiment, proceeding to proposal")
-                details["skipped_embed_sentiment"] = True
-            else:
-                # 2. Embed and upsert (with agent-specific store if set)
-                t0 = time.monotonic()
-                embed_result = await embed_and_upsert_docs(
-                    session, EmbedInput(doc_ids=ingest_result.doc_ids), store=store
-                )
-                details["upserted_chunks"] = embed_result.upserted_chunks
-                details["timing_embed_s"] = round(time.monotonic() - t0, 2)
-                logger.info(
-                    "Step 2/7 embed: %d chunks in %.1fs",
-                    embed_result.upserted_chunks, details["timing_embed_s"],
-                )
+                logger.info("No new docs ingested — skipping pipeline")
+                details["early_exit"] = "no_new_docs"
+                details["timing_total_s"] = round(time.monotonic() - cycle_start, 2)
+                await run_repo.complete_run(session, run.id, status="ok", details=details)
+                await session.flush()
+                return details
 
-                # 3. Score sentiment
-                t0 = time.monotonic()
-                sentiment_result = await score_sentiment(
-                    session, SentimentInput(doc_ids=ingest_result.doc_ids)
-                )
-                details["scored"] = sentiment_result.scored
-                details["timing_sentiment_s"] = round(time.monotonic() - t0, 2)
-                logger.info(
-                    "Step 3/7 sentiment: %d scored in %.1fs",
-                    sentiment_result.scored, details["timing_sentiment_s"],
-                )
+            # 2. Score sentiment (before embed so Qdrant payloads have correct scores)
+            t0 = time.monotonic()
+            sentiment_result = await score_sentiment(
+                session, SentimentInput(doc_ids=ingest_result.doc_ids)
+            )
+            details["scored"] = sentiment_result.scored
+            details["timing_sentiment_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 2/7 sentiment: %d scored in %.1fs",
+                sentiment_result.scored, details["timing_sentiment_s"],
+            )
+
+            # 3. Embed and upsert (with agent-specific store if set)
+            t0 = time.monotonic()
+            embed_result = await embed_and_upsert_docs(
+                session, EmbedInput(doc_ids=ingest_result.doc_ids), store=store
+            )
+            details["upserted_chunks"] = embed_result.upserted_chunks
+            details["timing_embed_s"] = round(time.monotonic() - t0, 2)
+            logger.info(
+                "Step 3/7 embed: %d chunks in %.1fs",
+                embed_result.upserted_chunks, details["timing_embed_s"],
+            )
 
             # 4. Propose strategy update (with agent-specific store if set)
             # Use a wider window (4 hours) so KB has enough context even

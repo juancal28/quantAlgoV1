@@ -47,7 +47,12 @@ class Settings(BaseSettings):
         "rss:https://news.google.com/rss/search?q=stock+market&hl=en-US&gl=US,"
         "rss:https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114,"
         "rss:https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB"
-        "?hl=en-US&gl=US&ceid=US:en"
+        "?hl=en-US&gl=US&ceid=US:en,"
+        "rss:https://finance.yahoo.com/rss/topstories,"
+        "rss:https://feeds.content.dowjones.io/public/rss/mw_topstories,"
+        "rss:https://news.google.com/rss/search?q=earnings+report&hl=en-US&gl=US,"
+        "rss:https://news.google.com/rss/search?q=federal+reserve+interest+rates&hl=en-US&gl=US,"
+        "rss:https://news.google.com/rss/search?q=NVDA+OR+AAPL+OR+MSFT+stock&hl=en-US&gl=US"
     )
     MAX_DOCS_PER_POLL: int = 50
     DEDUP_CONTENT_HASH: str = "sha256"
