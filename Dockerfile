@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1.4
 # ---- Build stage ----
 FROM python:3.11-slim AS builder
 
@@ -9,20 +8,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Layer 1: Build tools — almost never changes
-RUN --mount=type=cache,id=pip,target=/root/.cache/pip \
-    pip install scikit-build-core pybind11 cmake ninja
+RUN pip install --no-cache-dir scikit-build-core pybind11 cmake ninja
 
 # Layer 2: App dependencies — cached until pyproject.toml changes
 # NOTE: torch/transformers/FinBERT are NOT installed here. They live on
 # a Railway persistent volume and are set up at runtime by entrypoint.sh.
 COPY pyproject.toml ./
-RUN --mount=type=cache,id=pip,target=/root/.cache/pip \
-    python -c "\
+RUN python -c "\
 import tomllib, pathlib; \
 t = tomllib.load(open('pyproject.toml', 'rb')); \
 deps = t['project']['dependencies']; \
 pathlib.Path('/tmp/requirements.txt').write_text('\n'.join(deps))" \
-    && pip install -r /tmp/requirements.txt
+    && pip install --no-cache-dir -r /tmp/requirements.txt
 
 # Layer 3: Build C++ extension via cmake — only rebuilds when cpp/ changes
 COPY cpp/ ./cpp/
