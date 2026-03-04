@@ -64,7 +64,8 @@ async def test_auto_approve_disabled_when_zero(mock_settings):
 
     from apps.scheduler.jobs import run_auto_approve
 
-    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False):
+    with patch("apps.scheduler.jobs._is_scheduler_paused", return_value=False), \
+         patch("apps.scheduler.jobs._is_autonomous_mode", return_value=False):
         result = run_auto_approve()
     assert result["skipped"] is True
     assert result["reason"] == "auto_approve_disabled"

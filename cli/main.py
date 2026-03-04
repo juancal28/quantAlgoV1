@@ -7,6 +7,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
+from cli.commands.autonomous import autonomous_app
 from cli.commands.completion import completion_app
 from cli.commands.cycle import cycle
 from cli.commands.dashboard import dashboard
@@ -30,6 +31,7 @@ app = typer.Typer(
 
 # Sub-groups
 config_app = typer.Typer(help="CLI configuration.")
+app.add_typer(autonomous_app, name="autonomous")
 app.add_typer(completion_app, name="completion")
 app.add_typer(config_app, name="config")
 app.add_typer(scheduler_app, name="scheduler")
@@ -64,6 +66,9 @@ def help() -> None:
         ("quant strategies list [-s STATUS]", "List strategies (filter: active, pending_approval, archived)"),
         ("quant strategies approve NAME ID", "Approve a pending strategy version (with confirmation)"),
         ("quant strategies deactivate NAME", "Deactivate (archive) the active version of a strategy"),
+        ("quant autonomous enable", "Enable autonomous mode (auto-approve + auto-trade)"),
+        ("quant autonomous disable", "Disable autonomous mode (require manual approval)"),
+        ("quant autonomous status", "Check if autonomous mode is on or off"),
         ("quant scheduler pause", "Pause ALL automated tasks (zero API/LLM spend)"),
         ("quant scheduler resume", "Resume automated tasks"),
         ("quant scheduler status", "Check if scheduler is paused or running"),
@@ -95,6 +100,7 @@ def help() -> None:
     examples.add_row("See news from the last hour", "quant news -m 60")
     examples.add_row("Find strategies waiting for approval", "quant strategies list -s pending_approval")
     examples.add_row("Approve a strategy", "quant strategies approve sentiment_v1 <version-id>")
+    examples.add_row("Go fully autonomous", "quant autonomous enable")
     examples.add_row("Stop all automated spending", "quant scheduler pause")
     examples.add_row("Resume automated tasks", "quant scheduler resume")
     examples.add_row("Trigger a full pipeline run", "quant cycle")

@@ -34,12 +34,11 @@ def _build_beat_schedule(settings) -> dict:
         "schedule": 60.0,
     }
 
-    # Auto-approve pending strategies (only when configured)
-    if settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES > 0:
-        schedule["auto-approve-periodic"] = {
-            "task": "apps.scheduler.jobs.run_auto_approve",
-            "schedule": 60.0,
-        }
+    # Auto-approve pending strategies (runs always; task checks config + autonomous flag)
+    schedule["auto-approve-periodic"] = {
+        "task": "apps.scheduler.jobs.run_auto_approve",
+        "schedule": 60.0,
+    }
 
     # Expire active strategies past TTL (only when configured)
     if settings.STRATEGY_MAX_AGE_HOURS > 0:

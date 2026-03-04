@@ -23,12 +23,19 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 PAUSE_KEY = "scheduler:paused"
+AUTONOMOUS_KEY = "autonomous:enabled"
 
 
 def _is_scheduler_paused() -> bool:
     """Check Redis for the global scheduler pause flag."""
     r = _get_redis_client()
     return bool(r.exists(PAUSE_KEY))
+
+
+def _is_autonomous_mode() -> bool:
+    """Check Redis for the autonomous mode flag."""
+    r = _get_redis_client()
+    return bool(r.exists(AUTONOMOUS_KEY))
 
 
 # ---------------------------------------------------------------------------
@@ -579,21 +586,33 @@ async def _run_market_data_ingest_async(
     name="apps.scheduler.jobs.run_auto_approve",
 )
 def run_auto_approve(self) -> dict:
-    """Auto-approve pending strategies older than PENDING_APPROVAL_AUTO_APPROVE_MINUTES."""
+    """Auto-approve pending strategies.
+
+    In autonomous mode (Redis flag): approve immediately, no age gate.
+    Otherwise: approve after PENDING_APPROVAL_AUTO_APPROVE_MINUTES.
+    """
     if _is_scheduler_paused():
         logger.info("Scheduler paused — skipping auto_approve")
         return {"skipped": True, "reason": "scheduler_paused"}
 
+    autonomous = _is_autonomous_mode()
+
     settings = get_settings()
-    if settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES <= 0:
+    if not autonomous and settings.PENDING_APPROVAL_AUTO_APPROVE_MINUTES <= 0:
         return {"skipped": True, "reason": "auto_approve_disabled"}
-    return asyncio.run(_run_auto_approve_async())
+    return asyncio.run(_run_auto_approve_async(autonomous=autonomous))
 
 
 async def _run_auto_approve_async(
     _session: "AsyncSession | None" = None,
+    autonomous: bool = False,
 ) -> dict:
-    """Async implementation: approve pending strategies older than the configured threshold."""
+    """Async implementation: approve pending strategies.
+
+    Args:
+        _session: Optional session for testing.
+        autonomous: If True, approve immediately (no age gate).
+    """
     from core.agent.approval import approve_strategy
     from core.storage.repos import strategy_repo
 
@@ -610,25 +629,29 @@ async def _run_auto_approve_async(
         )
 
         for version in pending:
-            if version.created_at.tzinfo is None:
-                created = version.created_at.replace(tzinfo=timezone.utc)
-            else:
-                created = version.created_at
-            if created > cutoff:
-                continue
+            # In autonomous mode, skip the age gate — approve immediately
+            if not autonomous:
+                if version.created_at.tzinfo is None:
+                    created = version.created_at.replace(tzinfo=timezone.utc)
+                else:
+                    created = version.created_at
+                if created > cutoff:
+                    continue
 
+            approved_by = "autonomous" if autonomous else "auto"
             try:
                 await approve_strategy(
                     session,
                     strategy_name=version.name,
                     version_id=str(version.id),
-                    approved_by="auto",
+                    approved_by=approved_by,
                 )
                 approved.append(f"{version.name}@v{version.version}")
                 logger.info(
-                    "Auto-approved strategy %s version %s",
+                    "Auto-approved strategy %s version %s (autonomous=%s)",
                     version.name,
                     version.version,
+                    autonomous,
                 )
             except ValueError as exc:
                 errors.append(f"{version.name}@v{version.version}: {exc}")
@@ -639,7 +662,7 @@ async def _run_auto_approve_async(
                     exc,
                 )
 
-        return {"approved": approved, "errors": errors}
+        return {"approved": approved, "errors": errors, "autonomous": autonomous}
 
     if _session is not None:
         return await _execute(_session)

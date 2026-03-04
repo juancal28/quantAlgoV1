@@ -9,6 +9,7 @@ get_settings()
 
 from fastapi import FastAPI
 
+from apps.api.routers.autonomous import router as autonomous_router
 from apps.api.routers.backtests import router as backtests_router
 from apps.api.routers.health import router as health_router
 from apps.api.routers.ml_deps import router as ml_deps_router
@@ -29,3 +30,4 @@ app.include_router(runs_router)
 app.include_router(pnl_router)
 app.include_router(scheduler_router)
 app.include_router(ml_deps_router)
+app.include_router(autonomous_router)
