@@ -33,6 +33,32 @@ def _status_style(status: str) -> str:
     return status
 
 
+def _brief_detail(details: dict[str, Any] | None) -> str:
+    """Return the single most important detail for compact display (e.g. dashboard)."""
+    if not details:
+        return ""
+    if "early_exit" in details:
+        return str(details["early_exit"])
+    if "error" in details:
+        return str(details["error"])[:30]
+    if details.get("skipped"):
+        return details.get("reason", "lock_held")
+    if "quality_score" in details:
+        qp = details.get("quality_passed", False)
+        if not qp:
+            return "quality_failed"
+        return "quality_passed"
+    if "submitted_version_id" in details:
+        return "submitted"
+    if "ingested" in details:
+        return f"ingested={details['ingested']}"
+    if "confidence" in details:
+        return f"conf={details['confidence']:.2f}"
+    if "valid" in details:
+        return "valid" if details["valid"] else "invalid"
+    return ""
+
+
 def _summarize_details(details: dict[str, Any]) -> str:
     """Build a human-readable summary from run details, prioritizing key fields."""
     if not details:
