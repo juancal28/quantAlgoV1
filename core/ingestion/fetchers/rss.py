@@ -90,9 +90,16 @@ class RSSFetcher(BaseFetcher):
             raw_content = _extract_content(entry)
             content = normalize_content(raw_content) if raw_content else title
 
+            # Google News RSS includes the original publisher in entry.source
+            source_obj = getattr(entry, "source", None)
+            if source_obj and hasattr(source_obj, "title") and source_obj.title:
+                source_name = source_obj.title
+            else:
+                source_name = f"rss:{feed_url}"
+
             articles.append(
                 FetchedArticle(
-                    source=f"rss:{feed_url}",
+                    source=source_name,
                     source_url=link,
                     title=title,
                     published_at=_parse_published(entry),

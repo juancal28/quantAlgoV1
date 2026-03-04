@@ -55,8 +55,8 @@ _KNOWN_DOMAINS: dict[str, str] = {
 }
 
 
-def _friendly_source(source_url: str) -> str:
-    """Extract a short, human-readable source name from an article URL."""
+def _source_from_url(source_url: str) -> str:
+    """Extract a human-readable source name from an article URL."""
     from urllib.parse import urlparse
 
     if not source_url:
@@ -70,9 +70,20 @@ def _friendly_source(source_url: str) -> str:
     for domain, name in _KNOWN_DOMAINS.items():
         if domain in hostname:
             return name
-    # Fallback: use the main domain segment, capitalized
     parts = hostname.rsplit(".", 2)
     return parts[-2].capitalize() if len(parts) >= 2 else hostname.capitalize()
+
+
+def _friendly_source(source: str, source_url: str) -> str:
+    """Return a short publisher name.
+
+    Prefers the source field (set by the RSS fetcher from entry.source.title)
+    when it contains a real publisher name. Falls back to URL-based extraction.
+    """
+    # If source is a usable publisher name (not a URL, not generic)
+    if source and not source.startswith(("rss:", "http:", "https:")) and source.lower() not in ("news", "rss"):
+        return source
+    return _source_from_url(source_url)
 
 
 def render_news(articles: list[dict[str, Any]], console: Console | None = None) -> None:
@@ -85,7 +96,7 @@ def render_news(articles: list[dict[str, Any]], console: Console | None = None) 
     table = Table(title="Recent News", show_lines=False)
     table.add_column("Published", style="dim", width=18)
     table.add_column("Title", max_width=50)
-    table.add_column("Source", width=12)
+    table.add_column("Source", width=18)
     table.add_column("Score", justify="right", width=7)
     table.add_column("Sentiment", width=10)
     table.add_column("Tickers", width=20)
@@ -98,7 +109,7 @@ def render_news(articles: list[dict[str, Any]], console: Console | None = None) 
         table.add_row(
             _format_published(a.get("published_at", "")),
             a.get("title", "")[:50],
-            _friendly_source(a.get("source_url", "")),
+            _friendly_source(a.get("source", ""), a.get("source_url", "")),
             score_text,
             label_text,
             tickers or "[dim]--[/]",
