@@ -55,6 +55,12 @@ def _build_beat_schedule(settings) -> dict:
             "schedule": 21600.0,  # every 6 hours
         }
 
+    # Fetch market bars daily at 5:00 AM UTC (before market open)
+    schedule["market-data-ingest-daily"] = {
+        "task": "apps.scheduler.jobs.run_market_data_ingest",
+        "schedule": crontab(hour=5, minute=0),
+    }
+
     # Update ML deps on volume daily at 6:00 AM UTC (before market open)
     if settings.SENTIMENT_PROVIDER.lower() == "finbert":
         schedule["ml-deps-update-daily"] = {

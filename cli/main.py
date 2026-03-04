@@ -10,6 +10,7 @@ from rich.table import Table
 from cli.commands.completion import completion_app
 from cli.commands.cycle import cycle
 from cli.commands.dashboard import dashboard
+from cli.commands.market_data import market_data
 from cli.commands.ml_deps import ml_deps_update
 from cli.commands.news import news
 from cli.commands.pnl import pnl
@@ -41,6 +42,7 @@ app.command()(runs)
 app.command()(pnl)
 app.command()(cycle)
 app.command()(dashboard)
+app.command(name="market-data")(market_data)
 app.command(name="ml-deps-update")(ml_deps_update)
 app.command()(upgrade)
 
@@ -68,6 +70,7 @@ def help() -> None:
         ("quant runs [-n LIMIT]", "Recent pipeline runs (ingest, backtest, etc.)"),
         ("quant pnl STRATEGY [-d DAYS]", "Daily PnL snapshots with sparkline"),
         ("quant cycle", "Trigger a manual news cycle"),
+        ("quant market-data", "Fetch/backfill market bars for the approved universe"),
         ("quant dashboard [-i SECS]", "Live auto-refreshing dashboard (Ctrl+C to exit)"),
         ("quant ml-deps-update", "Update torch/transformers/FinBERT on the persistent volume"),
         ("quant upgrade", "Pull latest changes from git and reinstall"),

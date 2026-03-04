@@ -280,6 +280,35 @@ async def _run_news_cycle_async(
                 await session.flush()
                 return details
 
+            # 5b. Fetch market data for backtest universe
+            t0 = time.monotonic()
+            universe = new_definition.get("universe", [])
+            backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
+            # Need enough data for IS window + OOS window (90 days before IS)
+            is_calendar_days = int(backtest_days * 365 / 252)
+            total_lookback_days = is_calendar_days + 90 + 30  # extra buffer
+            try:
+                from core.ingestion.fetchers.market_data import fetch_and_store_bars
+
+                bars_upserted = await fetch_and_store_bars(
+                    session,
+                    tickers=universe,
+                    lookback_days=total_lookback_days,
+                )
+                details["market_bars_upserted"] = bars_upserted
+                details["timing_market_data_s"] = round(time.monotonic() - t0, 2)
+                logger.info(
+                    "Step 5b/8 market data: %d bars for %s in %.1fs",
+                    bars_upserted, universe, details["timing_market_data_s"],
+                )
+            except Exception as exc:
+                details["market_data_error"] = str(exc)
+                details["timing_market_data_s"] = round(time.monotonic() - t0, 2)
+                logger.warning(
+                    "Market data fetch failed (%.1fs): %s — backtest may fail",
+                    details["timing_market_data_s"], exc,
+                )
+
             # 6. Run backtest — in-sample
             t0 = time.monotonic()
             backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
@@ -461,6 +490,80 @@ async def _run_paper_trade_tick_all_async(
         return result
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Market data ingestion task
+# ---------------------------------------------------------------------------
+
+
+@celery_app.task(
+    bind=True,
+    max_retries=3,
+    retry_backoff=True,
+    retry_backoff_max=300,
+    name="apps.scheduler.jobs.run_market_data_ingest",
+)
+def run_market_data_ingest(self) -> dict:
+    """Fetch and store market bars for the approved universe.
+
+    Runs daily. Fetches enough history to cover both backtest windows
+    (in-sample + out-of-sample).
+    """
+    if _is_scheduler_paused():
+        logger.info("Scheduler paused — skipping market_data_ingest")
+        return {"skipped": True, "reason": "scheduler_paused"}
+
+    lock_name = "market_data_ingest"
+    lock_ttl = 600
+
+    if not _acquire_singleton_lock(lock_name, lock_ttl):
+        logger.info("Skipping market_data_ingest — previous run still in progress")
+        return {"skipped": True, "reason": "lock_held"}
+
+    try:
+        return asyncio.run(_run_market_data_ingest_async())
+    finally:
+        _release_singleton_lock(lock_name)
+
+
+async def _run_market_data_ingest_async(
+    _session: "AsyncSession | None" = None,
+) -> dict:
+    """Async implementation: fetch and store market bars."""
+    from core.ingestion.fetchers.market_data import fetch_and_store_bars
+
+    settings = get_settings()
+    tickers = settings.approved_universe_list
+
+    # Enough lookback for IS + OOS windows with buffer
+    backtest_days = settings.STRATEGY_MIN_BACKTEST_DAYS
+    is_calendar_days = int(backtest_days * 365 / 252)
+    lookback_days = is_calendar_days + 90 + 30
+
+    async def _execute(session: "AsyncSession") -> dict:
+        count = await fetch_and_store_bars(
+            session,
+            tickers=tickers,
+            lookback_days=lookback_days,
+        )
+        logger.info(
+            "Market data ingest: %d bars for %d tickers (lookback=%dd)",
+            count, len(tickers), lookback_days,
+        )
+        return {"bars_upserted": count, "tickers": tickers, "lookback_days": lookback_days}
+
+    if _session is not None:
+        return await _execute(_session)
+
+    from core.storage.db import get_session
+
+    async for session in get_session():
+        result = await _execute(session)
+        await session.commit()
+        return result
+
+    return {"bars_upserted": 0, "tickers": tickers, "lookback_days": lookback_days}
 
 
 # ---------------------------------------------------------------------------

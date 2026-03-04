@@ -32,6 +32,10 @@ class NewsCycleTriggerResponse(BaseModel):
     status: str
 
 
+class MarketDataTriggerResponse(BaseModel):
+    status: str
+
+
 @router.get("/recent", response_model=list[RunResponse])
 async def get_recent_runs(
     limit: int = Query(default=20, ge=1, le=100),
@@ -69,3 +73,18 @@ async def trigger_news_cycle(
         status = "failed"
 
     return NewsCycleTriggerResponse(run_id=run_id_str, status=status)
+
+
+@router.post("/market_data_ingest", response_model=MarketDataTriggerResponse)
+async def trigger_market_data_ingest() -> MarketDataTriggerResponse:
+    """Manually trigger market data ingestion for the approved universe."""
+    try:
+        from apps.scheduler.jobs import run_market_data_ingest
+
+        run_market_data_ingest.delay()
+        status = "dispatched"
+    except Exception:
+        logger.warning("Celery unavailable, market_data_ingest not dispatched", exc_info=True)
+        status = "failed"
+
+    return MarketDataTriggerResponse(status=status)
