@@ -111,7 +111,7 @@ def _format_documents(results: list[dict[str, Any]]) -> str:
     for r in results:
         payload = r.get("payload", {})
         parts.append(DOCUMENT_TEMPLATE_V1.format(
-            doc_id=r.get("id", "unknown"),
+            doc_id=payload.get("doc_id", r.get("id", "unknown")),
             title=payload.get("title", "untitled"),
             source=payload.get("source", "unknown"),
             published_at=payload.get("published_at", "unknown"),
@@ -177,7 +177,7 @@ async def propose_strategy_update(
 
     # 3. Format documents
     documents_text = _format_documents(results)
-    result_doc_ids = {r.get("id", "") for r in results}
+    result_doc_ids = {r.get("payload", {}).get("doc_id", r.get("id", "")) for r in results}
 
     # 4. Build prompts
     current_def_json = json.dumps(current_definition or {}, indent=2)
