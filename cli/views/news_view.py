@@ -36,44 +36,43 @@ def _sentiment_style(label: str | None, score: float | None) -> tuple[str, str]:
     return f"[dim]{score:+.2f}[/]", f"[dim]{label}[/]"
 
 
-def _friendly_source(raw: str) -> str:
-    """Extract a short, human-readable source name from a URL or prefixed string."""
-    # Strip scheme prefixes like "rss:"
-    url = raw.split(":", 1)[1] if ":" in raw else raw
-    url = url.lstrip("/")
-    # Extract domain
+_KNOWN_DOMAINS: dict[str, str] = {
+    "finance.yahoo.com": "Yahoo Finance",
+    "yahoo.com": "Yahoo Finance",
+    "reuters.com": "Reuters",
+    "bloomberg.com": "Bloomberg",
+    "cnbc.com": "CNBC",
+    "wsj.com": "WSJ",
+    "marketwatch.com": "MarketWatch",
+    "investing.com": "Investing.com",
+    "seekingalpha.com": "Seeking Alpha",
+    "ft.com": "Financial Times",
+    "barrons.com": "Barron's",
+    "benzinga.com": "Benzinga",
+    "fool.com": "Motley Fool",
+    "google.com": "Google News",
+    "news.google.com": "Google News",
+}
+
+
+def _friendly_source(source_url: str) -> str:
+    """Extract a short, human-readable source name from an article URL."""
+    from urllib.parse import urlparse
+
+    if not source_url:
+        return "--"
     try:
-        from urllib.parse import urlparse
-        hostname = urlparse(f"https://{url}" if "//" not in url else url).hostname or url
+        hostname = urlparse(source_url).hostname or ""
     except Exception:
-        hostname = url
-    # Remove common prefixes
+        return source_url[:15]
     if hostname.startswith("www."):
         hostname = hostname[4:]
-    # Remove common suffixes for brevity
-    if hostname.startswith("feeds."):
-        hostname = hostname[6:]
-    # Return just the domain name part (e.g. "finance.yahoo.com" -> "Yahoo Finance")
-    _KNOWN = {
-        "finance.yahoo.com": "Yahoo Finance",
-        "yahoo.com": "Yahoo Finance",
-        "reuters.com": "Reuters",
-        "bloomberg.com": "Bloomberg",
-        "cnbc.com": "CNBC",
-        "wsj.com": "WSJ",
-        "marketwatch.com": "MarketWatch",
-        "investing.com": "Investing.com",
-        "seekingalpha.com": "Seeking Alpha",
-        "ft.com": "Financial Times",
-        "barrons.com": "Barron's",
-        "benzinga.com": "Benzinga",
-        "fool.com": "Motley Fool",
-    }
-    for domain, name in _KNOWN.items():
+    for domain, name in _KNOWN_DOMAINS.items():
         if domain in hostname:
             return name
-    # Fallback: capitalize first segment of domain
-    return hostname.split(".")[0].capitalize()
+    # Fallback: use the main domain segment, capitalized
+    parts = hostname.rsplit(".", 2)
+    return parts[-2].capitalize() if len(parts) >= 2 else hostname.capitalize()
 
 
 def render_news(articles: list[dict[str, Any]], console: Console | None = None) -> None:
@@ -99,7 +98,7 @@ def render_news(articles: list[dict[str, Any]], console: Console | None = None) 
         table.add_row(
             _format_published(a.get("published_at", "")),
             a.get("title", "")[:50],
-            _friendly_source(a.get("source", "")),
+            _friendly_source(a.get("source_url", "")),
             score_text,
             label_text,
             tickers or "[dim]--[/]",
