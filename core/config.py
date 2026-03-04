@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     ALPACA_API_KEY: str = ""
     ALPACA_API_SECRET: str = ""
     ALPACA_BASE_URL: str = "https://paper-api.alpaca.markets"
+    ALPACA_DATA_FEED: str = "iex"  # "iex" (free tier) | "sip" (paid)
     MARKET_DATA_LOOKBACK_DAYS: int = 365
     BAR_TIMEFRAME: str = "1Day"
 

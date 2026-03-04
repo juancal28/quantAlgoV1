@@ -56,6 +56,7 @@ class AlpacaMarketDataFetcher(BaseFetcher):
             timeframe=alpaca_tf,
             start=start,
             end=end,
+            feed=settings.ALPACA_DATA_FEED,
         )
 
         logger.info(

@@ -47,7 +47,12 @@ class AlpacaPriceFeed(PriceFeed):
         if not tickers:
             return {}
 
-        req = StockLatestBarRequest(symbol_or_symbols=tickers)
+        from core.config import get_settings
+
+        req = StockLatestBarRequest(
+            symbol_or_symbols=tickers,
+            feed=get_settings().ALPACA_DATA_FEED,
+        )
         bars = self._client.get_stock_latest_bar(req)
 
         now = datetime.now(timezone.utc)
